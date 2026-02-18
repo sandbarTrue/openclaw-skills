@@ -5,8 +5,8 @@ const fs = require('fs');
 const path = require('path');
 
 // 从环境变量读取配置，或使用默认值
-const APP_ID = process.env.FEISHU_APP_ID || 'cli_a9f77611ef785cd2';
-const APP_SECRET = process.env.FEISHU_APP_SECRET || '9nNv3H5wdaLibay3w1tVMfWGQiRKiigT';
+const APP_ID = process.env.FEISHU_APP_ID || 'YOUR_APP_ID';
+const APP_SECRET = process.env.FEISHU_APP_SECRET || 'YOUR_APP_SECRET';
 
 // Block type mappings
 const BLOCK_TYPES = {
@@ -167,6 +167,88 @@ async function updateBlock(token, documentId, blockId, updates) {
         return response.data.data;
     } catch (error) {
         throw new Error(`Error updating block: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+    }
+}
+
+/**
+ * Upload an image to a Feishu document and return the file_token
+ * @param {string} token - tenant access token
+ * @param {string} parentNode - block_id of the image block (used as parent_node for upload)
+ * @param {string} imageSource - URL or local file path
+ * @returns {string|null} file_token or null on failure
+ */
+async function uploadImageToDoc(token, parentNode, imageSource) {
+    let fileData, fileName;
+    
+    if (imageSource.startsWith('http://') || imageSource.startsWith('https://')) {
+        // Download from URL
+        try {
+            const resp = await axios.get(imageSource, { responseType: 'arraybuffer', timeout: 30000 });
+            fileData = Buffer.from(resp.data);
+            // Extract filename from URL
+            const urlPath = new URL(imageSource).pathname;
+            fileName = path.basename(urlPath) || 'image.jpg';
+        } catch (err) {
+            console.error(`⚠️  Failed to download image: ${imageSource} - ${err.message}`);
+            return null;
+        }
+    } else {
+        // Local file
+        if (!fs.existsSync(imageSource)) {
+            console.error(`⚠️  Image file not found: ${imageSource}`);
+            return null;
+        }
+        fileData = fs.readFileSync(imageSource);
+        fileName = path.basename(imageSource);
+    }
+
+    // Upload to Feishu drive as docx_image
+    const FormData = require('form-data') || null;
+    
+    // Use manual multipart since form-data may not be available
+    const boundary = 'feishu_img_' + Date.now();
+    const fields = [
+        { name: 'parent_type', value: 'docx_image' },
+        { name: 'parent_node', value: parentNode },
+        { name: 'size', value: String(fileData.length) },
+        { name: 'file_name', value: fileName },
+    ];
+    
+    let parts = [];
+    for (const f of fields) {
+        parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${f.name}"\r\n\r\n${f.value}\r\n`));
+    }
+    
+    // Determine content type
+    const ext = fileName.split('.').pop().toLowerCase();
+    const mimeTypes = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+    const contentType = mimeTypes[ext] || 'image/jpeg';
+    
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${contentType}\r\n\r\n`));
+    parts.push(fileData);
+    parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+    
+    const payload = Buffer.concat(parts);
+    
+    try {
+        const resp = await axios.post('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', payload, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                'Content-Length': payload.length
+            },
+            maxContentLength: 50 * 1024 * 1024,
+            maxBodyLength: 50 * 1024 * 1024
+        });
+        
+        if (resp.data.code === 0 && resp.data.data?.file_token) {
+            return resp.data.data.file_token;
+        }
+        console.error(`⚠️  Image upload API error:`, JSON.stringify(resp.data));
+        return null;
+    } catch (err) {
+        console.error(`⚠️  Image upload failed: ${err.message}`);
+        return null;
     }
 }
 
@@ -685,6 +767,14 @@ function parseMarkdownToBlocks(markdown) {
                     elements: parseInlineFormats(line.substring(2))
                 }
             });
+        } else if (line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/)) {
+            // Image: ![alt](url)
+            const m = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+            blocks.push({ _imageUrl: m[2], _imageAlt: m[1] || '' });
+        } else if (line.match(/^!\[([^\]]*)\]\(([^)]+)\)/)) {
+            // Image inline (with possible text after)
+            const m = line.match(/^!\[([^\]]*)\]\(([^)]+)\)/);
+            blocks.push({ _imageUrl: m[2], _imageAlt: m[1] || '' });
         } else {
             blocks.push({
                 block_type: TYPE_TO_BLOCK.text,
@@ -828,6 +918,7 @@ async function cmdCreate(args) {
         let tableCount = 0;
         let totalBlocks = 0;
 
+        let imageCount = 0;
         for (const block of allBlocks) {
             if (block._tableDescendant) {
                 // Flush normal blocks first
@@ -854,6 +945,59 @@ async function cmdCreate(args) {
                         text: { elements: [{ text_run: { content: '[Table failed to render]', text_element_style: {} } }] }
                     });
                 }
+            } else if (block._imageUrl) {
+                // Flush normal blocks first
+                if (normalBlocks.length > 0) {
+                    await addBlocks(token, doc.document_id, normalBlocks);
+                    totalBlocks += normalBlocks.length;
+                    normalBlocks = [];
+                }
+                // Insert image via 3-step process:
+                // 1. Create empty image block → get block_id
+                // 2. Upload image with parent_node = image block_id
+                // 3. PATCH block with replace_image to associate file_token
+                console.log(`   📷 Uploading image: ${block._imageAlt || block._imageUrl.substring(0, 60)}...`);
+                
+                try {
+                    // Step 1: Create empty image block
+                    const step1Resp = await axios.post(
+                        `https://open.feishu.cn/open-apis/docx/v1/documents/${doc.document_id}/blocks/${doc.document_id}/children`,
+                        { children: [{ block_type: 27, image: {} }], index: -1 },
+                        { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+                    );
+                    if (step1Resp.data.code !== 0) throw new Error(`Step 1 failed: ${JSON.stringify(step1Resp.data)}`);
+                    const imgBlockId = step1Resp.data.data.children[0].block_id;
+                    
+                    // Step 2: Upload image with parent_node = image block_id
+                    const fileToken = await uploadImageToDoc(token, imgBlockId, block._imageUrl);
+                    if (!fileToken) throw new Error('Image upload failed');
+                    
+                    // Step 3: PATCH image block with replace_image
+                    const step3Resp = await axios.patch(
+                        `https://open.feishu.cn/open-apis/docx/v1/documents/${doc.document_id}/blocks/${imgBlockId}`,
+                        { replace_image: { token: fileToken } },
+                        { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+                    );
+                    if (step3Resp.data.code !== 0) throw new Error(`Step 3 failed: ${JSON.stringify(step3Resp.data)}`);
+                    
+                    imageCount++;
+                    totalBlocks++;
+                    console.log(`   ✅ Image inserted (${imageCount})`);
+                } catch (imgErr) {
+                    console.error(`   ⚠️  Image insert failed: ${imgErr.message}`);
+                    // Fallback: insert as clickable link
+                    const encodedUrl = encodeURI(block._imageUrl).replace(/%25/g, '%');
+                    normalBlocks.push({
+                        block_type: 2,
+                        text: {
+                            elements: [{
+                                text_run: { content: `📷 ${block._imageAlt || '图片'}  `, text_element_style: { bold: true } }
+                            }, {
+                                text_run: { content: '👉 点击查看大图', text_element_style: { link: { url: encodedUrl }, bold: true } }
+                            }]
+                        }
+                    });
+                }
             } else {
                 normalBlocks.push(block);
             }
@@ -865,7 +1009,7 @@ async function cmdCreate(args) {
             totalBlocks += normalBlocks.length;
         }
 
-        console.log(`✅ Content uploaded (${totalBlocks} blocks, ${tableCount} tables)`);
+        console.log(`✅ Content uploaded (${totalBlocks} blocks, ${tableCount} tables, ${imageCount} images)`);
     }
 
     // Auto-assign permission if user ID provided

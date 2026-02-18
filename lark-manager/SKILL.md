@@ -84,4 +84,4 @@ node SKILL_DIR/scripts/lark_manager.js test
 - 自动分批写入（chunkSize=50 blocks），解决长文档400错误
 - 支持 markdown → 飞书blocks 转换（标题/列表/代码/引用/分割线/待办）
 - 使用 tenant_access_token 认证
-- App ID: `cli_a9f77611ef785cd2`
+- App ID: `YOUR_APP_ID`

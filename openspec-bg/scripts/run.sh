@@ -111,42 +111,84 @@ cmd_start() {
     [ -n "$MAX_DURATION" ] && RUNNER_ARGS="$RUNNER_ARGS --max-duration $MAX_DURATION"
     [ -n "$VERBOSE" ] && RUNNER_ARGS="$RUNNER_ARGS -v"
 
-    # Build the command that runs inside screen
-    # Key: we source the model config to set env vars, then run the runner directly
-    local SCREEN_CMD="
-set -e
-cd '${PROJECT}'
+    # Determine if we need to switch user (root -> zhoujun.sandbar)
+    local RUNNER_USER=""
+    local SU_PREFIX=""
+    if [ "$(id -u)" -eq 0 ]; then
+        # Running as root, need to switch to zhoujun.sandbar for claude
+        RUNNER_USER="zhoujun.sandbar"
+        SU_PREFIX="su -l zhoujun.sandbar -c"
+    fi
 
-# Ensure node/npm available
-export PATH=/root/.nvm/versions/node/v24.10.0/bin:\$PATH
+    # === KEY FIX: Generate temp script BEFORE screen, not inside screen ===
+    # su -l is a login shell that clears ALL env vars.
+    # Nested heredoc inside double-quoted SCREEN_CMD doesn't work.
+    # Solution: generate the script file here, with env vars baked in.
 
-# Source model environment variables
-. '${OPENSPEC_CONFIG}' export '${MODEL}'
+    # Source model config to get env vars
+    . "${OPENSPEC_CONFIG}" export "${MODEL}"
 
-echo '=== OpenSpec Session Started ===' 
+    local SCREEN_SCRIPT="${LOG_DIR}/${SESSION}-run.sh"
+    cat > "$SCREEN_SCRIPT" << SCRIPTEOF
+#!/bin/bash
+# 不用 set -e，因为需要捕获 exit_code 后执行通知
+
+echo '=== OpenSpec Session Started ==='
 echo 'Session: ${SESSION}'
 echo 'Project: ${PROJECT}'
 echo 'Change:  ${CHANGE}'
 echo 'Model:   ${MODEL}'
-echo 'Time:    $(date)'
+echo "Time:    \$(date)"
 echo '================================'
 echo ''
 
-# Run the runner directly (non-interactive)
-bash '${OPENSPEC_RUNNER}' ${RUNNER_ARGS}
-exit_code=\$?
+# If running as root, switch to zhoujun.sandbar via baked temp script
+if [ \$(id -u) -eq 0 ]; then
+    TMPRUN="/tmp/openspec-run-\$\$.sh"
+    cat > "\$TMPRUN" << 'INNEREOF'
+#!/bin/bash
+export PATH=/root/.nvm/versions/node/v24.10.0/bin:\$PATH
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+unset ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+INNEREOF
+    echo "export ANTHROPIC_BASE_URL='${ANTHROPIC_BASE_URL}'" >> "\$TMPRUN"
+    echo "export ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}'" >> "\$TMPRUN"
+    echo "export OPENSPEC_MODEL='${MODEL}'" >> "\$TMPRUN"
+    echo "cd '${PROJECT}'" >> "\$TMPRUN"
+    echo "exec bash '${OPENSPEC_RUNNER}' ${RUNNER_ARGS}" >> "\$TMPRUN"
+    chmod +x "\$TMPRUN"
+    su -l zhoujun.sandbar -c "bash \$TMPRUN"
+    exit_code=\$?
+    rm -f "\$TMPRUN" || true
+else
+    export PATH=/root/.nvm/versions/node/v24.10.0/bin:\$PATH
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+    cd '${PROJECT}'
+    bash '${OPENSPEC_RUNNER}' ${RUNNER_ARGS}
+    exit_code=\$?
+fi
 
 echo ''
 echo '================================'
-echo \"Session finished with exit code: \$exit_code\"
-echo \"Time: \$(date)\"
+echo "Session finished with exit code: \$exit_code"
+echo "Time: \$(date)"
 
+# Write task-done callback file for heartbeat polling
+DONE_FILE="/tmp/task-done-${SESSION}.json"
 if [ \$exit_code -ne 0 ]; then
-    echo \"FAILED|\$exit_code|\$(date)\" > '${STATE_DIR}/${SESSION}.failed'
+    echo "FAILED|\$exit_code|\$(date)" > '${STATE_DIR}/${SESSION}.failed'
+    echo "{\"session\":\"${SESSION}\",\"status\":\"failed\",\"exit_code\":\$exit_code,\"timestamp\":\"\$(date -Iseconds)\",\"project\":\"${PROJECT}\",\"type\":\"openspec\"}" > "\$DONE_FILE"
+    bash /root/.openclaw/workspace/scripts/task-complete-notify.sh "${SESSION}" "failed" "${PROJECT}" "openspec" 2>/dev/null &
+else
+    echo "{\"session\":\"${SESSION}\",\"status\":\"success\",\"exit_code\":0,\"timestamp\":\"\$(date -Iseconds)\",\"project\":\"${PROJECT}\",\"type\":\"openspec\"}" > "\$DONE_FILE"
+    bash /root/.openclaw/workspace/scripts/task-complete-notify.sh "${SESSION}" "success" "${PROJECT}" "openspec" 2>/dev/null &
 fi
 
 exit \$exit_code
-"
+SCRIPTEOF
+    chmod +x "$SCREEN_SCRIPT"
+
+    local SCREEN_CMD="bash '${SCREEN_SCRIPT}'"
 
     # Start screen session with logging
     screen -L -Logfile "$LOG" -dmS "$SESSION" bash -c "$SCREEN_CMD"
@@ -355,6 +397,7 @@ OpenSpec Background Runner - OpenClaw Skill Wrapper
 
 Usage:
   run.sh start --project <path> --change <name> [--model <id>] [options]
+  run.sh run-direct --project <path> --task "任务描述" [--model <id>]
   run.sh status
   run.sh logs [session-name] [--lines N]
   run.sh stop [session-name]
@@ -370,13 +413,24 @@ Start Options:
   --max-duration <dur>   Max duration (e.g., 2h, 30m)
   --verbose, -v          Enable verbose output
 
+Run-Direct Options:
+  --project <path>       Project root directory (required)
+  --task <description>   Task description for Claude Code (required)
+  --model <id>           Model ID (default: glm-5)
+
 Output Format:
   All commands output key=value pairs for easy parsing.
   Logs output is delimited by ---LOG_START--- and ---LOG_END--- markers.
 
 Examples:
-  # Start a task
+  # Start a task with openspec change
   run.sh start --project /path/to/project --change fix-bug --model glm-5
+
+  # Run a direct task without openspec structure
+  run.sh run-direct --project /path/to/project --task "修复登录页面的按钮样式问题"
+
+  # Run with specific model
+  run.sh run-direct -p /path/to/project -t "添加日志功能" -m glm-5
 
   # Check status
   run.sh status
@@ -392,6 +446,178 @@ Examples:
 EOF
 }
 
+cmd_run_direct() {
+    local PROJECT="" TASK="" TASK_FILE="" MODEL="glm-5"
+
+    # Parse args
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project|-p)  PROJECT="$2"; shift 2 ;;
+            --task|-t)     TASK="$2"; shift 2 ;;
+            --task-file|-f) TASK_FILE="$2"; shift 2 ;;
+            --model|-m)    MODEL="$2"; shift 2 ;;
+            *) die "Unknown run-direct option: $1" ;;
+        esac
+    done
+
+    # Validate required args
+    [ -z "$PROJECT" ] && die "Missing --project <path>"
+    [ -d "$PROJECT" ] || die "Project directory does not exist: $PROJECT"
+
+    # Read task from file if --task-file provided
+    if [ -n "$TASK_FILE" ]; then
+        [ -f "$TASK_FILE" ] || die "Task file does not exist: $TASK_FILE"
+        TASK=$(cat "$TASK_FILE")
+    fi
+    [ -z "$TASK" ] && die "Missing --task or --task-file"
+
+    # Verify model exists in config
+    if [ -f "$CONFIG_FILE" ]; then
+        if ! bash "$OPENSPEC_CONFIG" export "$MODEL" >/dev/null 2>&1; then
+            die "Model '$MODEL' not found in config. Available models: $(bash "$OPENSPEC_CONFIG" list 2>/dev/null)"
+        fi
+    fi
+
+    # Generate session name
+    local ts=$(date +%s)
+    local SESSION="direct-${ts}"
+    local LOG="${LOG_DIR}/${SESSION}.log"
+
+    # =========================================================================
+    # KEY FIX: Write ALL dynamic content to files, never embed in shell strings.
+    # This prevents special characters in TASK from being interpreted by bash.
+    # =========================================================================
+
+    # 1. Write task prompt to a file (safe from shell interpretation)
+    local PROMPT_FILE="${LOG_DIR}/${SESSION}-prompt.txt"
+    cat > "$PROMPT_FILE" << 'PROMPT_HEADER'
+你是一个编码专家。请完成以下任务：
+
+PROMPT_HEADER
+    # Append the actual task (cat preserves all special chars)
+    printf '%s' "$TASK" >> "$PROMPT_FILE"
+    cat >> "$PROMPT_FILE" << 'PROMPT_FOOTER'
+
+请在项目目录中完成此任务。完成后简要说明你做了什么修改。
+PROMPT_FOOTER
+
+    # 2. Read model env vars directly from config file (reliable, no subshell issues)
+    local API_BASE="" API_KEY="" API_MODEL=""
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        local count="${MODEL_COUNT:-0}"
+        local found=0
+        for (( i=0; i<count; i++ )); do
+            local id_var="MODEL_${i}_ID"
+            local url_var="MODEL_${i}_URL"
+            local key_var="MODEL_${i}_KEY"
+            local model_var="MODEL_${i}_MODEL"
+            if [ "${!id_var}" = "$MODEL" ]; then
+                API_BASE="${!url_var}"
+                API_KEY="${!key_var}"
+                API_MODEL="${!model_var:-$MODEL}"
+                found=1
+                break
+            fi
+        done
+        [ "$found" -eq 0 ] && die "Model '$MODEL' not found in $CONFIG_FILE"
+    else
+        die "Config file not found: $CONFIG_FILE"
+    fi
+    [ -z "$API_BASE" ] && die "No API URL configured for model $MODEL"
+    [ -z "$API_KEY" ] && die "No API key configured for model $MODEL"
+
+    # 3. Write the runner script to a file (no heredoc-in-heredoc issues)
+    local RUNNER_SCRIPT="${LOG_DIR}/${SESSION}-runner.sh"
+    cat > "$RUNNER_SCRIPT" << 'RUNNER_STATIC'
+#!/bin/bash
+set -e
+export PATH=/root/.nvm/versions/node/v24.10.0/bin:$PATH
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+unset ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+RUNNER_STATIC
+
+    # Append dynamic env vars (written separately to avoid quoting issues)
+    echo "export ANTHROPIC_BASE_URL='${API_BASE}'" >> "$RUNNER_SCRIPT"
+    echo "export ANTHROPIC_API_KEY='${API_KEY}'" >> "$RUNNER_SCRIPT"
+    echo "cd '${PROJECT}'" >> "$RUNNER_SCRIPT"
+    # Read prompt from file into variable, then pass to claude -p
+    # This avoids shell escaping issues since the file content is loaded at runtime
+    cat >> "$RUNNER_SCRIPT" << CLAUDE_CMD
+PROMPT_TEXT=\$(cat '${PROMPT_FILE}')
+exec claude -p "\$PROMPT_TEXT" --model '${API_MODEL}' --dangerously-skip-permissions --output-format json
+CLAUDE_CMD
+    chmod +x "$RUNNER_SCRIPT"
+
+    # 4. Write the screen wrapper script
+    local SCREEN_SCRIPT="${LOG_DIR}/${SESSION}-screen.sh"
+    cat > "$SCREEN_SCRIPT" << SCREENEOF
+#!/bin/bash
+# 不用 set -e，需要捕获 exit_code 后执行通知
+
+echo '=== Claude Code Direct Run ==='
+echo "Session: ${SESSION}"
+echo "Project: ${PROJECT}"
+echo "Model:   ${MODEL}"
+echo "Task:    (see ${PROMPT_FILE})"
+echo "Time:    \$(date)"
+echo '================================'
+echo ''
+
+# Run the runner (switch user if root)
+if [ \$(id -u) -eq 0 ]; then
+    su -l zhoujun.sandbar -c "bash '${RUNNER_SCRIPT}'"
+else
+    bash "${RUNNER_SCRIPT}"
+fi
+exit_code=\$?
+
+echo ''
+echo '================================'
+echo "Session finished with exit code: \$exit_code"
+echo "Time: \$(date)"
+
+# Write task-done callback file for heartbeat polling
+DONE_FILE="/tmp/task-done-${SESSION}.json"
+if [ \$exit_code -ne 0 ]; then
+    echo "FAILED|\$exit_code|\$(date)" > '${STATE_DIR}/${SESSION}.failed'
+    echo '{"session":"${SESSION}","status":"failed","exit_code":'\$exit_code',"timestamp":"'\$(date -Iseconds)'","project":"${PROJECT}","type":"run-direct"}' > "\$DONE_FILE"
+    bash /root/.openclaw/workspace/scripts/task-complete-notify.sh "${SESSION}" "failed" "${PROJECT}" "run-direct" 2>/dev/null &
+else
+    echo '{"session":"${SESSION}","status":"success","exit_code":0,"timestamp":"'\$(date -Iseconds)'","project":"${PROJECT}","type":"run-direct"}' > "\$DONE_FILE"
+    bash /root/.openclaw/workspace/scripts/task-complete-notify.sh "${SESSION}" "success" "${PROJECT}" "run-direct" 2>/dev/null &
+fi
+
+exit \$exit_code
+SCREENEOF
+    chmod +x "$SCREEN_SCRIPT"
+
+    # 5. Start screen session executing the wrapper script
+    screen -L -Logfile "$LOG" -dmS "$SESSION" bash "$SCREEN_SCRIPT"
+
+    # Small delay to verify it started
+    sleep 1
+
+    # Verify screen session is running
+    if screen -ls 2>/dev/null | grep -q "$SESSION"; then
+        echo "SESSION=${SESSION}"
+        echo "LOG=${LOG}"
+        echo "PROJECT=${PROJECT}"
+        echo "MODEL=${MODEL}"
+        echo "TASK=${TASK}"
+        echo "STATUS=started"
+    else
+        echo "STATUS=failed"
+        echo "ERROR=Screen session failed to start"
+        # Show log if available
+        if [ -f "$LOG" ]; then
+            echo "---LOG---"
+            cat "$LOG"
+        fi
+        exit 1
+    fi
+}
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -401,6 +627,7 @@ shift || true
 
 case "$action" in
     start)      cmd_start "$@" ;;
+    run-direct) cmd_run_direct "$@" ;;
     status)     cmd_status "$@" ;;
     logs|log)   cmd_logs "$@" ;;
     stop)       cmd_stop "$@" ;;
