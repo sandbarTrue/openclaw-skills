@@ -1,0 +1,11 @@
+{
+  "name": "Neko",
+  "mood": "lovey",
+  "hunger": 25,
+  "xp": 15,
+  "level": 1,
+  "lastInteraction": 1771747129,
+  "totalInteractions": 0,
+  "createdAt": 0,
+  "personality": "default"
+}

@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neko Pet</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #0f0f1a;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container {
+      display: flex;
+      gap: 24px;
+      max-width: 1000px;
+      width: 100%;
+    }
+
+    /* 猫咪区域 */
+    .cat-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .cat-container {
+      position: relative;
+      width: 280px;
+      height: 280px;
+      filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.4));
+    }
+
+    .cat-body {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      overflow: hidden;
+      transition: all 1s ease;
+    }
+
+    /* SVG 定义 */
+    .svg-defs {
+      position: absolute;
+      width: 0;
+      height: 0;
+    }
+
+    /* 流体层 */
+    .fluid-layer {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      transition: background 1s ease;
+    }
+
+    .fluid-1 {
+      opacity: 0.8;
+    }
+
+    .fluid-2 {
+      opacity: 0.6;
+      mix-blend-mode: overlay;
+    }
+
+    .fluid-3 {
+      opacity: 0.4;
+      mix-blend-mode: soft-light;
+    }
+
+    /* 情绪动画 */
+    @keyframes rotate-slow {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes rotate-reverse {
+      from { transform: rotate(360deg); }
+      to { transform: rotate(0deg); }
+    }
+
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-15px); }
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-5px); }
+      75% { transform: translateX(5px); }
+    }
+
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0) scale(1); opacity: 0.8; }
+      50% { transform: translateY(-20px) scale(1.2); opacity: 1; }
+    }
+
+    @keyframes sparkle {
+      0%, 100% { opacity: 0; transform: scale(0) rotate(0deg); }
+      50% { opacity: 1; transform: scale(1) rotate(180deg); }
+    }
+
+    @keyframes blink {
+      0%, 90%, 100% { transform: scaleY(1); }
+      95% { transform: scaleY(0.1); }
+    }
+
+    /* 情绪状态样式 */
+    .mood-idle .fluid-1 { background: linear-gradient(135deg, #ff9f43 0%, #ee5a24 100%); animation: rotate-slow 20s linear infinite; }
+    .mood-idle .fluid-2 { background: linear-gradient(225deg, #ffbe76 0%, #ff7979 100%); animation: rotate-reverse 30s linear infinite; }
+    .mood-idle .fluid-3 { background: linear-gradient(45deg, #f6b93b 0%, #e55039 100%); animation: rotate-slow 40s linear infinite; }
+
+    .mood-happy .fluid-1 { background: linear-gradient(135deg, #f9ca24 0%, #f0932b 100%); animation: rotate-slow 8s linear infinite; }
+    .mood-happy .fluid-2 { background: linear-gradient(225deg, #ffecd2 0%, #fcb69f 100%); animation: rotate-reverse 12s linear infinite; }
+    .mood-happy .fluid-3 { background: linear-gradient(45deg, #ffeaa7 0%, #dfe6e9 100%); animation: rotate-slow 15s linear infinite; }
+    .mood-happy .cat-body { animation: bounce 0.8s ease-in-out infinite; }
+
+    .mood-sleepy .fluid-1 { background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%); animation: rotate-slow 40s linear infinite; }
+    .mood-sleepy .fluid-2 { background: linear-gradient(225deg, #a29bfe 0%, #6c5ce7 100%); animation: rotate-reverse 60s linear infinite; }
+    .mood-sleepy .fluid-3 { background: linear-gradient(45deg, #dfe6e9 0%, #b2bec3 100%); animation: rotate-slow 80s linear infinite; }
+    .mood-sleepy .cat-body { animation: breathe 4s ease-in-out infinite; }
+
+    .mood-hungry .fluid-1 { background: linear-gradient(135deg, #55efc4 0%, #00b894 100%); animation: rotate-slow 25s linear infinite; }
+    .mood-hungry .fluid-2 { background: linear-gradient(225deg, #81ecec 0%, #00cec9 100%); animation: rotate-reverse 35s linear infinite; }
+    .mood-hungry .fluid-3 { background: linear-gradient(45deg, #a3e4d7 0%, #1abc9c 100%); animation: rotate-slow 45s linear infinite; }
+
+    .mood-angry .fluid-1 { background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); animation: rotate-slow 3s linear infinite; }
+    .mood-angry .fluid-2 { background: linear-gradient(225deg, #ff4757 0%, #c0392b 100%); animation: rotate-reverse 4s linear infinite; }
+    .mood-angry .fluid-3 { background: linear-gradient(45deg, #e74c3c 0%, #922b21 100%); animation: rotate-slow 5s linear infinite; }
+    .mood-angry .cat-body { animation: shake 0.1s linear infinite; }
+
+    .mood-lovey .fluid-1 { background: linear-gradient(135deg, #fd79a8 0%, #e84393 100%); animation: rotate-slow 10s linear infinite; }
+    .mood-lovey .fluid-2 { background: linear-gradient(225deg, #ffcccc 0%, #ff99cc 100%); animation: rotate-reverse 15s linear infinite; }
+    .mood-lovey .fluid-3 { background: linear-gradient(45deg, #fab1a0 0%, #e17055 100%); animation: rotate-slow 20s linear infinite; }
+    .mood-lovey .cat-body { animation: bounce 1.2s ease-in-out infinite; }
+
+    .mood-curious .fluid-1 { background: linear-gradient(135deg, #a29bfe 0%, #6c5ce7 100%); animation: rotate-slow 15s linear infinite; }
+    .mood-curious .fluid-2 { background: linear-gradient(225deg, #d5aaff 0%, #9b59b6 100%); animation: rotate-reverse 20s linear infinite; }
+    .mood-curious .fluid-3 { background: linear-gradient(45deg, #be2edd 0%, #8e44ad 100%); animation: rotate-slow 25s linear infinite; }
+
+    /* 猫脸叠加层 */
+    .cat-face {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* 眼睛容器 */
+    .eyes {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 15px;
+      transform: translateY(-20px);
+    }
+
+    .eye {
+      width: 32px;
+      height: 32px;
+      background: #fff;
+      border-radius: 50%;
+      position: relative;
+      overflow: hidden;
+      animation: blink 3.5s ease-in-out infinite;
+    }
+
+    .pupil {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      background: #2d3436;
+      border-radius: 50%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      transition: all 0.3s ease;
+    }
+
+    .pupil::after {
+      content: '';
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      background: #fff;
+      border-radius: 50%;
+      top: 2px;
+      right: 2px;
+    }
+
+    /* 情绪眼睛变化 */
+    .mood-happy .eye { height: 8px; border-radius: 10px 10px 50% 50%; }
+    .mood-happy .pupil { display: none; }
+    .mood-happy .eye::before {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background: #2d3436;
+      border-radius: inherit;
+    }
+
+    .mood-sleepy .eye { height: 4px; border-radius: 2px; }
+    .mood-sleepy .pupil { display: none; }
+
+    .mood-hungry .pupil { width: 24px; height: 24px; }
+    .mood-hungry .pupil::before {
+      content: '';
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      background: #fff;
+      border-radius: 50%;
+      bottom: 2px;
+      left: 2px;
+    }
+
+    .mood-angry .eye { transform: skewX(-10deg); }
+    .mood-angry .pupil { width: 20px; height: 20px; border-radius: 3px; }
+
+    .mood-lovey .pupil {
+      width: 0;
+      height: 0;
+      background: transparent;
+      border: none;
+    }
+    .mood-lovey .eye::before {
+      content: '❤';
+      position: absolute;
+      font-size: 20px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #e84393;
+      animation: pulse 0.8s ease-in-out infinite;
+    }
+
+    .mood-curious .eye:first-child .pupil { width: 20px; height: 20px; left: 40%; }
+    .mood-curious .eye:last-child .pupil { width: 12px; height: 12px; left: 60%; }
+
+    @keyframes pulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.3); }
+    }
+
+    /* 鼻子和嘴 */
+    .nose {
+      width: 16px;
+      height: 12px;
+      background: #ff9ff3;
+      border-radius: 50% 50% 40% 40%;
+      margin-bottom: 8px;
+      transform: translateY(-15px);
+    }
+
+    .mouth {
+      width: 40px;
+      height: 20px;
+      transform: translateY(-20px);
+      position: relative;
+    }
+
+    .mouth::before,
+    .mouth::after {
+      content: '';
+      position: absolute;
+      width: 20px;
+      height: 15px;
+      border: 3px solid #2d3436;
+      border-top: none;
+      border-radius: 0 0 50% 50%;
+      top: 0;
+    }
+
+    .mouth::before { left: 0; }
+    .mouth::after { right: 0; }
+
+    /* 胡须 */
+    .whiskers {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .whisker {
+      position: absolute;
+      width: 50px;
+      height: 2px;
+      background: linear-gradient(90deg, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0) 100%);
+    }
+
+    .whisker.left { left: 20px; }
+    .whisker.right { right: 20px; transform: scaleX(-1); }
+
+    .whisker:nth-child(1) { top: 42%; transform: rotate(-10deg); }
+    .whisker:nth-child(2) { top: 48%; transform: rotate(0deg); }
+    .whisker:nth-child(3) { top: 54%; transform: rotate(10deg); }
+    .whisker:nth-child(4) { top: 42%; transform: scaleX(-1) rotate(-10deg); right: 20px; left: auto; }
+    .whisker:nth-child(5) { top: 48%; transform: scaleX(-1) rotate(0deg); right: 20px; left: auto; }
+    .whisker:nth-child(6) { top: 54%; transform: scaleX(-1) rotate(10deg); right: 20px; left: auto; }
+
+    /* 腮红 */
+    .blush {
+      position: absolute;
+      width: 35px;
+      height: 18px;
+      background: rgba(255, 150, 150, 0.5);
+      border-radius: 50%;
+      top: 50%;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+
+    .blush.left { left: 55px; }
+    .blush.right { right: 55px; }
+
+    .mood-happy .blush,
+    .mood-lovey .blush {
+      opacity: 1;
+    }
+
+    /* 浮动表情符号 */
+    .floating-emoji {
+      position: absolute;
+      font-size: 24px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .mood-sleepy .emoji-zzz {
+      opacity: 1;
+      animation: float 3s ease-in-out infinite;
+      top: 20px;
+      right: 30px;
+    }
+
+    .mood-hungry .emoji-meat {
+      opacity: 1;
+      animation: float 2s ease-in-out infinite;
+      top: 40px;
+      right: 20px;
+    }
+
+    .mood-angry .emoji-angry {
+      opacity: 1;
+      animation: float 0.5s ease-in-out infinite;
+      top: 10px;
+      right: 40px;
+    }
+
+    .mood-curious .emoji-sparkle {
+      opacity: 1;
+      animation: sparkle 1.5s ease-in-out infinite;
+      top: 50px;
+      right: 30px;
+    }
+
+    /* 玻璃高光 */
+    .glass-highlight {
+      position: absolute;
+      width: 80%;
+      height: 40%;
+      background: linear-gradient(180deg, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 100%);
+      border-radius: 50% 50% 30% 30%;
+      top: 10%;
+      left: 10%;
+      pointer-events: none;
+    }
+
+    /* 状态面板 */
+    .status-panel {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 20px;
+      padding: 20px;
+      width: 280px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .cat-name {
+      font-size: 28px;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 5px;
+      background: linear-gradient(135deg, #fff 0%, #a29bfe 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .cat-level {
+      text-align: center;
+      color: #a29bfe;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+
+    .mood-display {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .mood-emoji {
+      font-size: 32px;
+      margin-bottom: 5px;
+    }
+
+    .mood-text {
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    .mood-desc {
+      font-size: 12px;
+      color: #888;
+      margin-top: 5px;
+    }
+
+    .stat-bar {
+      margin-bottom: 15px;
+    }
+
+    .stat-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 5px;
+      font-size: 13px;
+    }
+
+    .stat-track {
+      height: 10px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .stat-fill {
+      height: 100%;
+      border-radius: 5px;
+      transition: width 0.5s ease, background 0.5s ease;
+    }
+
+    .mood-bar .stat-fill {
+      background: linear-gradient(90deg, #a29bfe 0%, #6c5ce7 100%);
+    }
+
+    .hunger-bar .stat-fill {
+      background: linear-gradient(90deg, #ff6b6b 0%, #ee5a24 100%);
+    }
+
+    .xp-bar .stat-fill {
+      background: linear-gradient(90deg, #74b9ff 0%, #0984e3 100%);
+    }
+
+    /* 情绪切换按钮 */
+    .mood-buttons {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .mood-btn {
+      padding: 8px;
+      border: none;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      cursor: pointer;
+      font-size: 18px;
+      transition: all 0.3s ease;
+    }
+
+    .mood-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: scale(1.1);
+    }
+
+    .mood-btn.active {
+      background: rgba(255, 255, 255, 0.3);
+      box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+    }
+
+    /* 聊天区域 */
+    .chat-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      max-width: 350px;
+    }
+
+    .chat-header {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 15px;
+      color: #a29bfe;
+    }
+
+    .chat-messages {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 15px;
+      padding: 15px;
+      margin-bottom: 15px;
+      max-height: 300px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .message {
+      padding: 10px 15px;
+      border-radius: 15px;
+      max-width: 85%;
+      word-wrap: break-word;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.cat {
+      background: linear-gradient(135deg, #f9ca24 0%, #f0932b 100%);
+      align-self: flex-start;
+      border-bottom-left-radius: 5px;
+    }
+
+    .message.user {
+      background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%);
+      align-self: flex-end;
+      border-bottom-right-radius: 5px;
+    }
+
+    .message.system {
+      background: rgba(255, 255, 255, 0.1);
+      align-self: center;
+      font-size: 12px;
+      color: #888;
+    }
+
+    .chat-input-area {
+      display: flex;
+      gap: 10px;
+    }
+
+    .chat-input {
+      flex: 1;
+      padding: 12px 15px;
+      border: none;
+      border-radius: 25px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .chat-input::placeholder {
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    .chat-send {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 25px;
+      background: linear-gradient(135deg, #a29bfe 0%, #6c5ce7 100%);
+      color: #fff;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+
+    .chat-send:hover {
+      transform: scale(1.05);
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .quick-btn {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 15px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.3s ease;
+    }
+
+    .quick-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      transform: translateY(-2px);
+    }
+
+    /* 响应式 */
+    @media (max-width: 900px) {
+      .container {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .chat-section {
+        max-width: 100%;
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 500px) {
+      .cat-container {
+        width: 220px;
+        height: 220px;
+      }
+
+      .status-panel {
+        width: 100%;
+      }
+
+      .eyes { gap: 30px; }
+      .eye { width: 26px; height: 26px; }
+      .pupil { width: 13px; height: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="svg-defs">
+    <defs>
+      <clipPath id="catClip" clipPathUnits="objectBoundingBox">
+        <path d="M 0.18 0.28 C 0.14 0.12, 0.20 0.00, 0.28 0.05 C 0.33 0.08, 0.34 0.16, 0.35 0.20 C 0.38 0.17, 0.44 0.16, 0.50 0.16 C 0.56 0.16, 0.62 0.17, 0.65 0.20 C 0.66 0.16, 0.67 0.08, 0.72 0.05 C 0.80 0.00, 0.86 0.12, 0.82 0.28 C 0.92 0.36, 0.97 0.48, 0.97 0.58 C 0.97 0.80, 0.82 0.97, 0.50 0.97 C 0.18 0.97, 0.03 0.80, 0.03 0.58 C 0.03 0.48, 0.08 0.36, 0.18 0.28 Z"/>
+      </clipPath>
+      <clipPath id="earInnerClip" clipPathUnits="objectBoundingBox">
+        <path d="M 0.21 0.25 C 0.18 0.14, 0.22 0.05, 0.27 0.08 C 0.30 0.10, 0.31 0.16, 0.31 0.22 Z M 0.79 0.25 C 0.82 0.14, 0.78 0.05, 0.73 0.08 C 0.70 0.10, 0.69 0.16, 0.69 0.22 Z"/>
+      </clipPath>
+    </defs>
+  </svg>
+
+  <div class="container">
+    <!-- 猫咪区域 -->
+    <div class="cat-section">
+      <div class="cat-container">
+        <div class="cat-body mood-idle" id="catBody" style="clip-path: url(#catClip); -webkit-clip-path: url(#catClip);">
+          <div class="fluid-layer fluid-1"></div>
+          <div class="fluid-layer fluid-2"></div>
+          <div class="fluid-layer fluid-3"></div>
+        </div>
+        
+        <div class="cat-face" id="catFace">
+          <div class="whiskers">
+            <div class="whisker left"></div>
+            <div class="whisker left"></div>
+            <div class="whisker left"></div>
+            <div class="whisker right"></div>
+            <div class="whisker right"></div>
+            <div class="whisker right"></div>
+          </div>
+          
+          <div class="eyes">
+            <div class="eye"><div class="pupil"></div></div>
+            <div class="eye"><div class="pupil"></div></div>
+          </div>
+          
+          <div class="nose"></div>
+          <div class="mouth"></div>
+          
+          <div class="blush left"></div>
+          <div class="blush right"></div>
+          
+          <div class="floating-emoji emoji-zzz">💤</div>
+          <div class="floating-emoji emoji-meat">💭🍖</div>
+          <div class="floating-emoji emoji-angry">💢</div>
+          <div class="floating-emoji emoji-sparkle">✨</div>
+        </div>
+        
+        <div class="glass-highlight"></div>
+      </div>
+
+      <!-- 状态面板 -->
+      <div class="status-panel">
+        <div class="cat-name" id="catName">Neko</div>
+        <div class="cat-level">Level <span id="levelDisplay">1</span> Kitten</div>
+        
+        <div class="mood-display">
+          <div class="mood-emoji" id="moodEmoji">😺</div>
+          <div class="mood-text" id="moodText">Idle</div>
+          <div class="mood-desc" id="moodDesc">Just relaxing~</div>
+        </div>
+        
+        <div class="stat-bar mood-bar">
+          <div class="stat-label">
+            <span>💖 Mood</span>
+            <span id="moodPercent">80%</span>
+          </div>
+          <div class="stat-track">
+            <div class="stat-fill" id="moodFill" style="width: 80%"></div>
+          </div>
+        </div>
+        
+        <div class="stat-bar hunger-bar">
+          <div class="stat-label">
+            <span>🍖 Hunger</span>
+            <span id="hungerPercent">75%</span>
+          </div>
+          <div class="stat-track">
+            <div class="stat-fill" id="hungerFill" style="width: 75%"></div>
+          </div>
+        </div>
+        
+        <div class="stat-bar xp-bar">
+          <div class="stat-label">
+            <span>⭐ XP</span>
+            <span id="xpText">15 / 50</span>
+          </div>
+          <div class="stat-track">
+            <div class="stat-fill" id="xpFill" style="width: 30%"></div>
+          </div>
+        </div>
+        
+        <div class="mood-buttons">
+          <button class="mood-btn" data-mood="idle" title="Idle">😺</button>
+          <button class="mood-btn" data-mood="happy" title="Happy">😄</button>
+          <button class="mood-btn" data-mood="sleepy" title="Sleepy">😴</button>
+          <button class="mood-btn" data-mood="hungry" title="Hungry">😿</button>
+          <button class="mood-btn" data-mood="angry" title="Angry">😾</button>
+          <button class="mood-btn" data-mood="lovey" title="Lovey">🥰</button>
+          <button class="mood-btn" data-mood="curious" title="Curious">🤔</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 聊天区域 -->
+    <div class="chat-section">
+      <div class="chat-header">💬 Chat with Neko</div>
+      
+      <div class="chat-messages" id="chatMessages">
+        <div class="message cat">喵~ 你好呀！我是 Neko 喵~</div>
+        <div class="message system">你可以和我说说话，或者点下面的按钮喂我、摸我~</div>
+      </div>
+      
+      <div class="chat-input-area">
+        <input type="text" class="chat-input" id="chatInput" placeholder="Say something to Neko..." />
+        <button class="chat-send" id="chatSend">Send</button>
+      </div>
+      
+      <div class="quick-actions">
+        <button class="quick-btn" id="feedBtn">🐟 喂猫</button>
+        <button class="quick-btn" id="petBtn">✋ 摸猫</button>
+        <button class="quick-btn" id="playBtn">🎮 玩游戏</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 状态
+    let state = {
+      name: 'Neko',
+      mood: 'idle',
+      hunger: 75,
+      xp: 15,
+      level: 1
+    };
+
+    // 情绪配置
+    const moodConfig = {
+      idle: { emoji: '😺', text: 'Idle', desc: 'Just relaxing~', moodPercent: 80 },
+      happy: { emoji: '😄', text: 'Happy', desc: 'So happy nya~!', moodPercent: 100 },
+      sleepy: { emoji: '😴', text: 'Sleepy', desc: 'Zzz...', moodPercent: 60 },
+      hungry: { emoji: '😿', text: 'Hungry', desc: 'I want food...', moodPercent: 40 },
+      angry: { emoji: '😾', text: 'Angry', desc: 'Hmph!', moodPercent: 20 },
+      lovey: { emoji: '🥰', text: 'Lovey', desc: 'I love you~', moodPercent: 95 },
+      curious: { emoji: '🤔', text: 'Curious', desc: 'Interesting...', moodPercent: 70 }
+    };
+
+    // 等级配置
+    const levelThresholds = [0, 50, 150, 500];
+    const levelNames = ['Kitten', 'Young Cat', 'Adult Cat', 'Wise Cat'];
+
+    // 从 URL 参数加载状态
+    function loadFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('name')) state.name = params.get('name');
+      if (params.has('mood')) state.mood = params.get('mood');
+      if (params.has('hunger')) state.hunger = parseInt(params.get('hunger')) || 75;
+      if (params.has('xp')) state.xp = parseInt(params.get('xp')) || 15;
+      if (params.has('level')) state.level = parseInt(params.get('level')) || 1;
+      updateUI();
+    }
+
+    // 更新 UI
+    function updateUI() {
+      // 更新标题
+      document.title = `${state.name} - ${moodConfig[state.mood].text}`;
+      
+      // 更新猫咪名字和等级
+      document.getElementById('catName').textContent = state.name;
+      document.getElementById('levelDisplay').textContent = state.level;
+      
+      // 更新情绪显示
+      const config = moodConfig[state.mood];
+      document.getElementById('moodEmoji').textContent = config.emoji;
+      document.getElementById('moodText').textContent = config.text;
+      document.getElementById('moodDesc').textContent = config.desc;
+      document.getElementById('moodPercent').textContent = config.moodPercent + '%';
+      document.getElementById('moodFill').style.width = config.moodPercent + '%';
+      
+      // 更新饥饿度
+      document.getElementById('hungerPercent').textContent = state.hunger + '%';
+      document.getElementById('hungerFill').style.width = state.hunger + '%';
+      
+      // 更新 XP
+      const currentThreshold = levelThresholds[state.level - 1] || 0;
+      const nextThreshold = levelThresholds[state.level] || levelThresholds[levelThresholds.length - 1];
+      const xpInLevel = state.xp - currentThreshold;
+      const xpNeeded = nextThreshold - currentThreshold;
+      const xpPercent = Math.min(100, Math.max(0, (xpInLevel / xpNeeded) * 100));
+      
+      document.getElementById('xpText').textContent = `${state.xp} / ${nextThreshold}`;
+      document.getElementById('xpFill').style.width = xpPercent + '%';
+      
+      // 更新猫咪身体情绪类
+      const catBody = document.getElementById('catBody');
+      catBody.className = 'cat-body mood-' + state.mood;
+      
+      // 更新情绪按钮激活状态
+      document.querySelectorAll('.mood-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mood === state.mood);
+      });
+    }
+
+    // 设置情绪
+    function setMood(mood) {
+      state.mood = mood;
+      updateUI();
+    }
+
+    // 喂猫
+    function feedCat(food = 'fish') {
+      const foodBonus = { fish: 30, meat: 20, milk: 15, treat: 10 };
+      state.hunger = Math.min(100, state.hunger + (foodBonus[food] || 10));
+      state.xp += 2;
+      state.mood = 'happy';
+      checkLevelUp();
+      updateUI();
+      return foodBonus[food] || 10;
+    }
+
+    // 摸猫
+    function petCat() {
+      state.xp += 3;
+      state.mood = 'lovey';
+      checkLevelUp();
+      updateUI();
+    }
+
+    // 玩游戏
+    function playGame() {
+      state.xp += 5;
+      state.mood = 'happy';
+      checkLevelUp();
+      updateUI();
+    }
+
+    // 检查升级
+    function checkLevelUp() {
+      for (let i = levelThresholds.length - 1; i >= 0; i--) {
+        if (state.xp >= levelThresholds[i] && state.level < i + 1) {
+          state.level = i + 1;
+          addMessage('cat', `喵喵喵！我升级了！现在我是 ${levelNames[i]} 了喵~ 🎉`);
+          break;
+        }
+      }
+    }
+
+    // 添加消息
+    function addMessage(type, text) {
+      const container = document.getElementById('chatMessages');
+      const msg = document.createElement('div');
+      msg.className = 'message ' + type;
+      msg.textContent = text;
+      container.appendChild(msg);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // 猫咪回复
+    function catReply(userMessage) {
+      const replies = {
+        '喂': ['喵~ 好吃喵！谢谢你~', '鱼鱼！最爱了喵~', '饱饱的了喵~'],
+        '摸': ['呼噜呼噜~ 舒服喵~', '喵~ 再摸摸~', 'prrrr~ 好幸福喵~'],
+        '玩': ['好耶！来玩喵~', '喵哈哈~ 好开心！', '再来再来喵~'],
+        '你好': ['喵~ 你好呀！', '喵呜~ 想我了吗？', '嗨嗨喵~'],
+        '可爱': ['喵~ 人家害羞了~', '你也可爱喵~', '喵呜~'],
+        '名字': [`我叫 ${state.name} 喵~`, `${state.name} 就是我喵~`],
+        '喜欢': ['喵~ 我也喜欢你！', '最喜欢你了喵~', '喵呜~ ❤️'],
+      };
+      
+      let reply = '喵~';
+      for (const [key, values] of Object.entries(replies)) {
+        if (userMessage.includes(key)) {
+          reply = values[Math.floor(Math.random() * values.length)];
+          break;
+        }
+      }
+      
+      setTimeout(() => addMessage('cat', reply), 500);
+    }
+
+    // 发送消息
+    function sendMessage() {
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text) return;
+      
+      addMessage('user', text);
+      input.value = '';
+      
+      catReply(text);
+    }
+
+    // 事件绑定
+    document.getElementById('chatSend').addEventListener('click', sendMessage);
+    document.getElementById('chatInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    document.getElementById('feedBtn').addEventListener('click', () => {
+      addMessage('user', '喂猫 🐟');
+      const bonus = feedCat('fish');
+      addMessage('cat', `喵~ 好吃的鱼！饱食度 +${bonus} 喵~`);
+    });
+
+    document.getElementById('petBtn').addEventListener('click', () => {
+      addMessage('user', '摸猫 ✋');
+      petCat();
+      addMessage('cat', '呼噜呼噜~ 好舒服喵~ XP +3');
+    });
+
+    document.getElementById('playBtn').addEventListener('click', () => {
+      addMessage('user', '玩游戏 🎮');
+      playGame();
+      addMessage('cat', '喵哈哈~ 好好玩！XP +5');
+    });
+
+    document.querySelectorAll('.mood-btn').forEach(btn => {
+      btn.addEventListener('click', () => setMood(btn.dataset.mood));
+    });
+
+    // 初始化
+    loadFromURL();
+  </script>
+</body>
+</html>
