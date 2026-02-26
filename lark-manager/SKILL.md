@@ -90,12 +90,12 @@ node SKILL_DIR/scripts/lark_manager.js test
 - 转移流程：创建 → 添加 full_access → transfer_owner
 - 如果 transfer 失败，自动 fallback 到 full_access 权限
 
-## 已知用户ID
-- your_name/the user: `YOUR_OPEN_ID`（DEFAULT_OWNER_ID, app YOUR_APP_ID 下的 open_id）
-- your_name/the user (旧 app): `YOUR_OPEN_ID`（app YOUR_APP_ID 下的 open_id，已弃用）
+## 凭据配置
+脚本自动从 OpenClaw 配置读取飞书凭据（`~/.openclaw/openclaw.json` → `channels.feishu.appId/appSecret`），无需额外配置。也支持环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 覆盖。
 
 ## 技术细节
 - 自动分批写入（chunkSize=50 blocks），解决长文档400错误
-- 支持 markdown → 飞书blocks 转换（标题/列表/代码/引用/分割线/待办）
-- 使用 tenant_access_token 认证
-- App ID: `YOUR_APP_ID`
+- 支持 markdown → 飞书blocks 转换（标题/列表/代码/引用/分割线/待办/表格/图片）
+- 图片插入：3步法（创建空image block → 上传图片 → PATCH replace_image）
+- 表格插入：使用 descendant API（block_type=31/32）
+- 使用 tenant_access_token 认证，自动从 openclaw.json 读取 appId/appSecret
