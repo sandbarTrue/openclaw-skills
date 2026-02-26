@@ -6,7 +6,7 @@ description: 新增/更新任务到 task-queue.json 并同步看板。当需要�
 # Task Manager Skill
 
 ## 何时使用
-- 搞钱大王提出新需求/任务
+- the user提出新需求/任务
 - 需要更新任务状态（PROPOSED → REGISTERED → EXECUTING 等）
 - 需要同步看板数据
 - 需要批量操作任务
@@ -28,7 +28,7 @@ bash SKILL_DIR/scripts/add-task.sh \
   --id "task-name-MMDD" \
   --name "任务标题" \
   --priority 50 \
-  --source "搞钱大王 MM-DD" \
+  --source "the user MM-DD" \
   --description "任务描述" \
   --type "feature|bugfix|research|refactor|infra" \
   --deploy \
@@ -57,7 +57,7 @@ bash SKILL_DIR/scripts/refresh-dashboard.sh
   "priority": 50,                   // P100=最高, P10=最低
   "state": "PROPOSED",              // 状态机初始值
   "type": "feature",                // feature|bugfix|research|refactor|infra
-  "source": "搞钱大王 02-20",       // 来源
+  "source": "the user 02-20",       // 来源
   "needs_deploy": true,             // 是否需要部署
   "deploy_targets": [],             // 部署目标
   "depends_on": [],                 // 依赖的其他任务 id
@@ -84,13 +84,13 @@ BLOCKED (可从任何状态进入)                                              
 
 ### 合法状态值
 - `PROPOSED` — 刚创建，等待生成提案
-- `PENDING_PROPOSAL_REVIEW` — 提案已生成，等搞钱大王确认
+- `PENDING_PROPOSAL_REVIEW` — 提案已生成，等the user确认
 - `PENDING_APPROVAL` — 同上（兼容旧值）
 - `REGISTERED` — 提案已批准，等待调度执行
 - `EXECUTING` — 正在执行
 - `AUTO_VERIFYING` — 自动验证中
 - `MANUAL_VERIFYING` — 人工验证中（截图等）
-- `PENDING_FINAL_REVIEW` — 等搞钱大王最终确认
+- `PENDING_FINAL_REVIEW` — 等the user最终确认
 - `COMPLETED` — 完成
 - `BLOCKED` — 被阻塞
 - `CANCELLED` — 已取消

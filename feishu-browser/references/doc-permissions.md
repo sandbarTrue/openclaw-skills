@@ -5,7 +5,7 @@
 ### Step 1: 打开目标文档
 
 ```
-browser action=navigate profile=openclaw targetUrl="https://ja484frx8z.feishu.cn/wiki/<doc_token>"
+browser action=navigate profile=openclaw targetUrl="https://YOUR_TENANT.feishu.cn/wiki/<doc_token>"
 ```
 
 ### Step 2: 点击 Share 按钮

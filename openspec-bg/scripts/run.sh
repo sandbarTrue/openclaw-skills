@@ -111,13 +111,13 @@ cmd_start() {
     [ -n "$MAX_DURATION" ] && RUNNER_ARGS="$RUNNER_ARGS --max-duration $MAX_DURATION"
     [ -n "$VERBOSE" ] && RUNNER_ARGS="$RUNNER_ARGS -v"
 
-    # Determine if we need to switch user (root -> zhoujun.sandbar)
+    # Determine if we need to switch user (root -> YOUR_USERNAME)
     local RUNNER_USER=""
     local SU_PREFIX=""
     if [ "$(id -u)" -eq 0 ]; then
-        # Running as root, need to switch to zhoujun.sandbar for claude
-        RUNNER_USER="zhoujun.sandbar"
-        SU_PREFIX="su -l zhoujun.sandbar -c"
+        # Running as root, need to switch to YOUR_USERNAME for claude
+        RUNNER_USER="YOUR_USERNAME"
+        SU_PREFIX="su -l YOUR_USERNAME -c"
     fi
 
     # === KEY FIX: Generate temp script BEFORE screen, not inside screen ===
@@ -142,7 +142,7 @@ echo "Time:    \$(date)"
 echo '================================'
 echo ''
 
-# If running as root, switch to zhoujun.sandbar via baked temp script
+# If running as root, switch to YOUR_USERNAME via baked temp script
 if [ \$(id -u) -eq 0 ]; then
     TMPRUN="/tmp/openspec-run-\$\$.sh"
     cat > "\$TMPRUN" << 'INNEREOF'
@@ -160,7 +160,7 @@ INNEREOF
     echo "cd '${PROJECT}'" >> "\$TMPRUN"
     echo "exec bash '${OPENSPEC_RUNNER}' ${RUNNER_ARGS}" >> "\$TMPRUN"
     chmod +x "\$TMPRUN"
-    su -l zhoujun.sandbar -c "bash \$TMPRUN"
+    su -l YOUR_USERNAME -c "bash \$TMPRUN"
     exit_code=\$?
     rm -f "\$TMPRUN" || true
 else
@@ -618,7 +618,7 @@ echo ''
 
 # Run the runner (switch user if root)
 if [ \$(id -u) -eq 0 ]; then
-    su -l zhoujun.sandbar -c "bash '${RUNNER_SCRIPT}'"
+    su -l YOUR_USERNAME -c "bash '${RUNNER_SCRIPT}'"
 else
     bash "${RUNNER_SCRIPT}"
 fi
@@ -728,12 +728,138 @@ SCREENEOF
 # Main
 # ============================================================================
 
+cmd_run_coco() {
+    local PROJECT="" TASK="" TASK_FILE=""
+
+    # Parse args
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project|-p)   PROJECT="$2"; shift 2 ;;
+            --task|-t)      TASK="$2"; shift 2 ;;
+            --task-file|-f) TASK_FILE="$2"; shift 2 ;;
+            *) die "Unknown run-coco option: $1" ;;
+        esac
+    done
+
+    # Validate
+    [ -z "$PROJECT" ] && die "Missing --project <path>"
+    [ -d "$PROJECT" ] || die "Project directory does not exist: $PROJECT"
+
+    # Read task from file if --task-file provided
+    if [ -n "$TASK_FILE" ]; then
+        [ -f "$TASK_FILE" ] || die "Task file does not exist: $TASK_FILE"
+        TASK=$(cat "$TASK_FILE")
+    fi
+    [ -z "$TASK" ] && die "Missing --task or --task-file"
+
+    # Verify coco is available
+    command -v coco >/dev/null 2>&1 || die "coco CLI not found. Install it first."
+
+    # Verify kerberos ticket
+    klist -s 2>/dev/null || die "Kerberos ticket expired. Run: kinit"
+
+    # Generate session name
+    local ts=$(date +%s)
+    local SESSION="coco-${ts}"
+    local LOG="${LOG_DIR}/${SESSION}.log"
+
+    # Write task to prompt file (safe from shell interpretation)
+    local PROMPT_FILE="${LOG_DIR}/${SESSION}-prompt.txt"
+    printf '%s' "$TASK" > "$PROMPT_FILE"
+
+    # Write screen wrapper script
+    local SCREEN_SCRIPT="${LOG_DIR}/${SESSION}-screen.sh"
+    cat > "$SCREEN_SCRIPT" << SCREENEOF
+#!/bin/bash
+set +e  # Don't exit on error - need to capture exit_code and write task-done
+
+echo '=== Coco Agent Run ==='
+echo "Session: ${SESSION}"
+echo "Project: ${PROJECT}"
+echo "Time:    \$(date)"
+echo '================================'
+echo ''
+
+cd '${PROJECT}'
+
+# Run coco with task from prompt file
+TASK_TEXT=\$(cat '${PROMPT_FILE}')
+coco -p --yolo "\$TASK_TEXT"
+exit_code=\$?
+
+echo ''
+echo '================================'
+echo "Session finished with exit code: \$exit_code"
+echo "Time: \$(date)"
+
+# Write task-done callback file for heartbeat polling
+DONE_FILE="/tmp/task-done-${SESSION}.json"
+
+# Extract task title from first meaningful line of prompt
+TASK_TITLE=\$(head -5 '${PROMPT_FILE}' 2>/dev/null | grep -v '^$' | head -1 | head -c 100 || echo "coco 任务")
+
+# Determine status
+if [ \$exit_code -ne 0 ]; then
+    STATUS_STR="failed"
+else
+    STATUS_STR="success"
+fi
+
+# Write task-done JSON using python3 with stdin (avoids shell escaping issues)
+echo "\$TASK_TITLE" | python3 -c "
+import json, sys
+title = sys.stdin.read().strip()[:200] or 'coco 任务'
+data = {
+    'session': '${SESSION}',
+    'status': '\$STATUS_STR',
+    'exit_code': \$exit_code,
+    'project': '${PROJECT}',
+    'type': 'run-coco',
+    'task_title': title,
+}
+with open('\$DONE_FILE', 'w') as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+" 2>/dev/null || echo '{\"session\":\"${SESSION}\",\"status\":\"\$STATUS_STR\",\"exit_code\":\$exit_code,\"project\":\"${PROJECT}\",\"type\":\"run-coco\"}' > "\$DONE_FILE"
+
+# Notify
+if [ -f /root/.openclaw/workspace/scripts/task-complete-notify.sh ]; then
+    bash /root/.openclaw/workspace/scripts/task-complete-notify.sh "${SESSION}" "\$([ \$exit_code -ne 0 ] && echo failed || echo success)" "${PROJECT}" "run-coco" >> /tmp/task-notify.log 2>&1
+fi
+
+exit \$exit_code
+SCREENEOF
+    chmod +x "$SCREEN_SCRIPT"
+
+    # Start screen session
+    screen -L -Logfile "$LOG" -dmS "$SESSION" bash "$SCREEN_SCRIPT"
+
+    sleep 2
+
+    # Verify
+    if screen -ls 2>/dev/null | grep -q "$SESSION" || [ -s "$LOG" ]; then
+        echo "SESSION=${SESSION}"
+        echo "LOG=${LOG}"
+        echo "PROJECT=${PROJECT}"
+        echo "AGENT=coco"
+        echo "STATUS=started"
+    else
+        echo "STATUS=failed"
+        echo "ERROR=Screen session failed to start"
+        if [ -f "$LOG" ]; then
+            echo "---LOG---"
+            cat "$LOG"
+        fi
+        exit 1
+    fi
+}
+
 action="${1:-help}"
 shift || true
 
 case "$action" in
     start)      cmd_start "$@" ;;
     run-direct) cmd_run_direct "$@" ;;
+    run-coco)   cmd_run_coco "$@" ;;
     status)     cmd_status "$@" ;;
     logs|log)   cmd_logs "$@" ;;
     stop)       cmd_stop "$@" ;;

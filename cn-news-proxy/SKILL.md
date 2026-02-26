@@ -7,7 +7,7 @@ description: 通过 Spaceship 海外代理抓取中国财经/科技新闻源。�
 
 ## 何时使用
 - 生成每日商业报告时，需要国内+海外多源新闻
-- 搞钱大王要求了解国内市场、AI 动态、新产品趋势
+- the user要求了解国内市场、AI 动态、新产品趋势
 
 ## 依赖
 - SSH 到 Spaceship（`ssh spaceship`），已在 TOOLS.md 配置

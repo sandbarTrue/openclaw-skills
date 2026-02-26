@@ -38,8 +38,8 @@ bash /root/.openclaw/workspace/skills/skill-auditor/scripts/audit.sh /tmp/skill-
 | 结果 | 动作 |
 |------|------|
 | 全 GREEN | 可以安装：`clawhub install <name>` |
-| 有 YELLOW | 报告给搞钱大王，等确认 |
-| 有 RED | **禁止安装**，通知搞钱大王 |
+| 有 YELLOW | 报告给the user，等确认 |
+| 有 RED | **禁止安装**，通知the user |
 
 ### Step 5: 记录审查结果
 

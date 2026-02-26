@@ -5,7 +5,7 @@
 ### Step 1: 导航到云空间
 
 ```
-browser action=navigate profile=openclaw targetUrl="https://ja484frx8z.feishu.cn/drive/home/"
+browser action=navigate profile=openclaw targetUrl="https://YOUR_TENANT.feishu.cn/drive/home/"
 ```
 
 等待 2 秒。

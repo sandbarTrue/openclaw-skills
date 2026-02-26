@@ -21,7 +21,7 @@ description: 通过OpenSpec + Claude Code在后台执行编码任务。支持GLM
 bash SKILL_DIR/scripts/run.sh start --project /path/to/project --change change-name [--model glm-5]
 ```
 
-### 模式2：Run-Direct（快速单任务）
+### 模式2：Run-Direct（快速单任务，Claude Code）
 不需要 openspec 结构，直接给一个任务描述让 Claude Code 执行。适合 bug 修复、小功能、文件修改等。
 
 ```bash
@@ -33,6 +33,20 @@ bash SKILL_DIR/scripts/run.sh run-direct --project /path/to/project --task-file 
 ```
 
 **⚠️ 推荐用 `--task-file`（`-f`）传递复杂任务**：直接 `-t` 传递含反引号、括号、代码块的长文本可能被 shell 解析出错。
+
+### 模式3：Run-Coco（internal coco agent）
+使用internal coco CLI 执行编码任务。基于 Kerberos 认证，支持internal模型。
+
+```bash
+# 短任务
+bash SKILL_DIR/scripts/run.sh run-coco --project /path/to/project --task "任务描述"
+
+# 长任务用文件传递（推荐）
+bash SKILL_DIR/scripts/run.sh run-coco --project /path/to/project --task-file /tmp/task.md
+```
+
+**前提条件：** coco CLI 已安装、Kerberos ticket 有效（`klist -s`）。
+**优势：** screen 持久化 + task-done 回调 + heartbeat 自动巡检，不怕误 kill。
 
 ## 前提条件
 - Claude Code CLI 已安装（`claude --version`）
@@ -91,9 +105,9 @@ bash SKILL_DIR/scripts/run.sh list-models
 
 ## 已知问题与修复
 
-### 1. 字节内网代理干扰（已修复）
+### 1. corporate proxy干扰（已修复）
 **现象**：Claude Code `-p` 模式连接智谱 API 时永远卡住，无响应。
-**根因**：服务器环境有字节内网代理 `http_proxy=http://sys-proxy-rd-relay.byted.org:8118`，Claude Code 通过此代理连智谱 → 代理不可达 → 卡死。
+**根因**：服务器环境有corporate proxy `http_proxy=http://your-corporate-proxy:8118`，Claude Code 通过此代理连智谱 → 代理不可达 → 卡死。
 **修复**：run.sh 的 SCREEN_CMD 里已加入 `unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY`。
 
 ### 2. OpenClaw reasoning=true 导致 400 错误（已修复）
@@ -103,12 +117,12 @@ bash SKILL_DIR/scripts/run.sh list-models
 
 ### 3. Root 用户不能用 --dangerously-skip-permissions（但普通用户可以）
 **现象**：`claude -p --dangerously-skip-permissions` 在 **root** 下报错退出。
-**修复**：run.sh 检测 root 用户时自动用 `su -l zhoujun.sandbar` 切换执行。
-**重要**：`zhoujun.sandbar` 等普通用户 **可以** 用 `--dangerously-skip-permissions`！之前误以为普通用户也不能用，导致写文件时 permission_denials。
+**修复**：run.sh 检测 root 用户时自动用 `su -l YOUR_USERNAME` 切换执行。
+**重要**：`YOUR_USERNAME` 等普通用户 **可以** 用 `--dangerously-skip-permissions`！之前误以为普通用户也不能用，导致写文件时 permission_denials。
 **runner 已修复**：自动加 `--dangerously-skip-permissions`（非 root 时）。
 
 ### 4. su -l 清掉环境变量导致认证失败（已修复 x2）
-**现象**：`su -l zhoujun.sandbar` 是 login shell，会清掉所有环境变量，导致 Claude Code 报 `Not logged in` 或 `401 Unauthorized`。
+**现象**：`su -l YOUR_USERNAME` 是 login shell，会清掉所有环境变量，导致 Claude Code 报 `Not logged in` 或 `401 Unauthorized`。
 **根因**：`ANTHROPIC_API_KEY` 和 `ANTHROPIC_BASE_URL` 在 su -l 后丢失。
 **修复**：**必须用临时脚本方案**（bake env vars）。不要在 `su -c '...'` 里嵌套引号传变量。
 ```bash
@@ -124,7 +138,7 @@ echo "unset ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN" >> "$TMPRUN"
 echo "cd '/path/to/project'" >> "$TMPRUN"
 echo "exec bash /path/to/runner.sh" >> "$TMPRUN"
 chmod +x "$TMPRUN"
-su -l zhoujun.sandbar -c "bash $TMPRUN"
+su -l YOUR_USERNAME -c "bash $TMPRUN"
 rm -f "$TMPRUN"
 ```
 **⚠️ 此问题已复现三次**（run-direct / start 旧版 / start SCREEN_CMD 嵌套 heredoc）。
@@ -178,7 +192,7 @@ run.sh (this skill)
   │    └─ sources openspec-config.sh export <model>
   │    └─ screen -dmS <session>
   │         └─ unset proxy
-  │         └─ [su -l zhoujun.sandbar if root]
+  │         └─ [su -l YOUR_USERNAME if root]
   │         └─ openspec-runner.sh --change <id>
   │              └─ claude -p <prompt> → GLM-5 API
   │
@@ -186,6 +200,6 @@ run.sh (this skill)
        └─ sources openspec-config.sh export <model>
        └─ screen -dmS <session>
             └─ unset proxy
-            └─ [su -l zhoujun.sandbar if root]
+            └─ [su -l YOUR_USERNAME if root]
             └─ claude -p "任务描述" → GLM-5 API
 ```

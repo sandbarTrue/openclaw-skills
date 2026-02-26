@@ -11,7 +11,7 @@ browser action=start profile=openclaw
 ### Step 1: 导航到消息页
 
 ```
-browser action=navigate profile=openclaw targetUrl="https://ja484frx8z.feishu.cn/next/messenger/"
+browser action=navigate profile=openclaw targetUrl="https://YOUR_TENANT.feishu.cn/next/messenger/"
 ```
 
 等待 2-3 秒，用 screenshot 确认页面加载完成。

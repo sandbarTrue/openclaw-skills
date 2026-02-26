@@ -26,14 +26,14 @@ function loadFeishuCredentials() {
     }
     // 最终兜底（不应该走到这里）
     console.error('⚠️  Warning: Could not read Feishu credentials from openclaw.json, using fallback');
-    return { appId: 'cli_a91cd9c68338dcca', appSecret: 'dzh1bwqpnECveFkE8Hx6IecOgBkzgXNm' };
+    return { appId: 'YOUR_APP_ID', appSecret: 'YOUR_APP_SECRET' };
 }
 
 const { appId: APP_ID, appSecret: APP_SECRET } = loadFeishuCredentials();
 
-// Default document owner - 搞钱大王 (all documents auto-transfer to this user)
-// Note: open_id is per-app. This is 搞钱大王's open_id under app cli_a91cd9c68338dcca
-const DEFAULT_OWNER_ID = 'ou_527bdc608e85214fb4849d3d2613bb55';
+// Default document owner - the user (all documents auto-transfer to this user)
+// Note: open_id is per-app. This is the user's open_id under app YOUR_APP_ID
+const DEFAULT_OWNER_ID = 'YOUR_OPEN_ID';
 
 // Block type mappings
 const BLOCK_TYPES = {
@@ -1069,7 +1069,7 @@ async function cmdCreate(args) {
         console.log(`✅ Content uploaded (${totalBlocks} blocks, ${tableCount} tables, ${imageCount} images)`);
     }
 
-    // Auto-transfer owner: default to 搞钱大王 if no user specified
+    // Auto-transfer owner: default to the user if no user specified
     const ownerUserId = userId || DEFAULT_OWNER_ID;
     if (ownerUserId) {
         console.log(`\n🔓 Transferring document owner to: ${ownerUserId}`);
@@ -1487,7 +1487,7 @@ Permission Options:
 
 Examples:
   # Create document and auto-assign permission
-  node lark_manager.js create --title "My Doc" --user ou_e512bb532a31e199e2c7e81966b87db0
+  node lark_manager.js create --title "My Doc" --user YOUR_OPEN_ID
 
   # Create document from markdown
   node lark_manager.js create --title "My Doc" --file content.md
@@ -1505,7 +1505,7 @@ Examples:
   node lark_manager.js edit --doc <doc_id> --file new_content.md
 
   # Add permission (授权给用户)
-  node lark_manager.js add-permission --doc <doc_id> --user ou_e512bb532a31e199e2c7e81966b87db0 --perm edit
+  node lark_manager.js add-permission --doc <doc_id> --user YOUR_OPEN_ID --perm edit
 
   # List permissions
   node lark_manager.js list-permissions --doc <doc_id>

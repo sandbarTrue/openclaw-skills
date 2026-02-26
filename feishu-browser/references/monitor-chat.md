@@ -9,7 +9,7 @@
 ### 1. 进入目标群聊
 
 ```
-browser action=navigate profile=openclaw targetUrl="https://ja484frx8z.feishu.cn/next/messenger/"
+browser action=navigate profile=openclaw targetUrl="https://YOUR_TENANT.feishu.cn/next/messenger/"
 ```
 
 等待加载后点击目标群聊。

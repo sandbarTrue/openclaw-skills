@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # add-task.sh — 新增任务到 task-queue.json + TASK.md + 刷新看板
-# 用法: bash add-task.sh --id xxx --name "标题" --priority 50 --source "搞钱大王 02-20" --description "描述" [--type feature] [--deploy] [--depends other-id] [--blocked "原因"]
+# 用法: bash add-task.sh --id xxx --name "标题" --priority 50 --source "the user 02-20" --description "描述" [--type feature] [--deploy] [--depends other-id] [--blocked "原因"]
 
 set -euo pipefail
 
@@ -35,7 +35,7 @@ MISSING=""
 
 if [[ -n "$MISSING" ]]; then
   echo "❌ Missing required fields:$MISSING"
-  echo "Usage: add-task.sh --id xxx --name '标题' --priority 50 --source '搞钱大王 02-20' [--description '描述'] [--type feature] [--deploy] [--depends other-id] [--blocked '原因']"
+  echo "Usage: add-task.sh --id xxx --name '标题' --priority 50 --source 'the user 02-20' [--description '描述'] [--type feature] [--deploy] [--depends other-id] [--blocked '原因']"
   exit 1
 fi
 
