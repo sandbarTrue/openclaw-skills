@@ -46,6 +46,14 @@ node SKILL_DIR/scripts/lark_manager.js edit --doc <doc_id> --file new_content.md
 node SKILL_DIR/scripts/lark_manager.js edit --doc <doc_id> --block <block_id> --text "新内容"
 ```
 
+### 转移文档所有者
+```bash
+# 转移给搞钱大王（默认，不需要指定 --user）
+node SKILL_DIR/scripts/lark_manager.js transfer-owner --doc <doc_id>
+# 转移给指定用户
+node SKILL_DIR/scripts/lark_manager.js transfer-owner --doc <doc_id> --user ou_xxx
+```
+
 ### 添加权限
 ```bash
 # edit / view / full_access
@@ -77,8 +85,14 @@ node SKILL_DIR/scripts/lark_manager.js test
 - `--file, -f`: markdown文件路径
 - `--folder`: 目标文件夹token
 
+## 默认行为
+- **所有新建文档自动转移 owner 给搞钱大王**（即使不指定 `--user`）
+- 转移流程：创建 → 添加 full_access → transfer_owner
+- 如果 transfer 失败，自动 fallback 到 full_access 权限
+
 ## 已知用户ID
-- 周军/搞钱大王: `ou_e512bb532a31e199e2c7e81966b87db0`
+- 周军/搞钱大王: `ou_527bdc608e85214fb4849d3d2613bb55`（DEFAULT_OWNER_ID, app cli_a91cd9c68338dcca 下的 open_id）
+- 周军/搞钱大王 (旧 app): `ou_e512bb532a31e199e2c7e81966b87db0`（app cli_a9f77611ef785cd2 下的 open_id，已弃用）
 
 ## 技术细节
 - 自动分批写入（chunkSize=50 blocks），解决长文档400错误

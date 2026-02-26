@@ -31,6 +31,10 @@ function loadFeishuCredentials() {
 
 const { appId: APP_ID, appSecret: APP_SECRET } = loadFeishuCredentials();
 
+// Default document owner - 搞钱大王 (all documents auto-transfer to this user)
+// Note: open_id is per-app. This is 搞钱大王's open_id under app cli_a91cd9c68338dcca
+const DEFAULT_OWNER_ID = 'ou_527bdc608e85214fb4849d3d2613bb55';
+
 // Block type mappings
 const BLOCK_TYPES = {
     1: 'page',
@@ -383,6 +387,36 @@ async function addPermissionMember(token, documentId, userId, perm = 'edit', not
         return response.data.data;
     } catch (error) {
         throw new Error(`Error adding permission: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+    }
+}
+
+/**
+ * Transfer document owner
+ * API: POST https://open.feishu.cn/open-apis/drive/v1/permissions/:token/members/transfer_owner
+ */
+async function transferOwner(token, documentId, userId, removeOldOwner = false) {
+    const url = `https://open.feishu.cn/open-apis/drive/v1/permissions/${documentId}/members/transfer_owner`;
+    try {
+        const response = await axios.post(url, {
+            member_type: 'openid',
+            member_id: userId,
+            remove_old_owner: removeOldOwner
+        }, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json; charset=utf-8'
+            },
+            params: {
+                type: 'docx',
+                need_notification: true
+            }
+        });
+        if (response.data.code !== 0) {
+            throw new Error(`Transfer owner failed: code=${response.data.code}, msg=${response.data.msg}`);
+        }
+        return response.data.data;
+    } catch (error) {
+        throw new Error(`Error transferring owner: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
     }
 }
 
@@ -1035,15 +1069,25 @@ async function cmdCreate(args) {
         console.log(`✅ Content uploaded (${totalBlocks} blocks, ${tableCount} tables, ${imageCount} images)`);
     }
 
-    // Auto-assign permission if user ID provided
-    if (userId) {
-        console.log(`\n🔓 Attempting to assign permission to user: ${userId}`);
+    // Auto-transfer owner: default to 搞钱大王 if no user specified
+    const ownerUserId = userId || DEFAULT_OWNER_ID;
+    if (ownerUserId) {
+        console.log(`\n🔓 Transferring document owner to: ${ownerUserId}`);
         try {
-            await addPermissionMember(token, doc.document_id, userId, 'edit', false);
-            console.log(`✅ Permission assigned successfully!`);
+            // First add as full_access collaborator (required before transfer)
+            await addPermissionMember(token, doc.document_id, ownerUserId, 'full_access', false);
+            // Then transfer ownership
+            await transferOwner(token, doc.document_id, ownerUserId, false);
+            console.log(`✅ Document owner transferred successfully!`);
         } catch (err) {
-            console.warn(`⚠️  Auto-assign permission failed: ${err.message}`);
-            console.warn(`   Please manually share the document with the user.`);
+            console.warn(`⚠️  Owner transfer failed: ${err.message}`);
+            console.warn(`   Falling back to full_access permission...`);
+            try {
+                await addPermissionMember(token, doc.document_id, ownerUserId, 'full_access', false);
+                console.log(`✅ Full access permission assigned as fallback.`);
+            } catch (err2) {
+                console.warn(`⚠️  Fallback also failed: ${err2.message}`);
+            }
         }
     }
 
@@ -1281,6 +1325,42 @@ async function cmdDeletePermission(args) {
 /**
  * Command: Test API connection
  */
+/**
+ * Command: Transfer document owner
+ */
+async function cmdTransferOwner(args) {
+    const docId = args.doc || args.d;
+    const userId = args.user || args.u || DEFAULT_OWNER_ID;
+
+    if (!docId) {
+        console.error('❌ Document ID required (--doc or -d)');
+        process.exit(1);
+    }
+    if (!userId) {
+        console.error('❌ User ID required (--user or -u)');
+        process.exit(1);
+    }
+
+    console.log(`🔄 Transferring owner of document: ${docId}`);
+    console.log(`   New owner: ${userId}`);
+
+    const token = await getTenantAccessToken();
+
+    // First ensure user has full_access
+    try {
+        await addPermissionMember(token, docId, userId, 'full_access', false);
+        console.log(`✅ Full access granted`);
+    } catch (err) {
+        console.log(`ℹ️  Permission already exists or add failed: ${err.message}`);
+    }
+
+    // Transfer ownership
+    const result = await transferOwner(token, docId, userId, false);
+    console.log(`✅ Owner transferred successfully!`);
+    console.log(`   Document URL: https://feishu.cn/docx/${docId}`);
+    return result;
+}
+
 async function cmdTest() {
     console.log(`🧪 Testing API connection...`);
 
@@ -1353,6 +1433,9 @@ async function main() {
                 break;
             case 'delete-permission':
                 await cmdDeletePermission(parsedArgs);
+                break;
+            case 'transfer-owner':
+                await cmdTransferOwner(parsedArgs);
                 break;
             case 'test':
                 await cmdTest();
@@ -1459,6 +1542,7 @@ module.exports = {
     parseMarkdownToBlocks,
     blocksToMarkdown,
     addPermissionMember,
+    transferOwner,
     listPermissionMembers,
     updatePermissionMember,
     deletePermissionMember
