@@ -74,10 +74,14 @@ That's it. OpenClaw now uses your Claude subscription.
 If your server is behind a corporate firewall/proxy (e.g. ByteDance CorpLink, corporate VPN), Node.js won't automatically route HTTPS requests through `HTTPS_PROXY`. Install `https-proxy-agent` to fix this:
 
 ```bash
-npm install -g https-proxy-agent
+# Install in the proxy directory (next to proxy.js)
+cd anthropic-oauth-proxy/
+npm install https-proxy-agent
 ```
 
-Then set the proxy env var:
+This creates a local `node_modules/` folder. The proxy auto-detects it via `require()`.
+
+Then set the proxy env vars:
 
 ```bash
 export HTTPS_PROXY="http://your-corp-proxy:8118"
@@ -117,7 +121,7 @@ Without `MINIMAX_API_KEY`, the proxy works fine — it just won't have a backup 
 | `PROXY_HOST` | No | `127.0.0.1` | Host to bind to |
 | `COOLDOWN_MS` | No | `300000` (5min) | Cooldown before switching back to primary |
 | `STATE_FILE` | No | `./brain-state.json` | Where to persist failover state |
-| `HTTPS_PROXY` | No | — | Corporate outbound proxy URL (requires `npm i -g https-proxy-agent`) |
+| `HTTPS_PROXY` | No | — | Corporate outbound proxy URL (requires `npm i https-proxy-agent` in proxy dir) |
 | `NO_PROXY` | No | — | Comma-separated domains to bypass proxy (e.g. `.byted.org,.local`) |
 
 ## Endpoints
