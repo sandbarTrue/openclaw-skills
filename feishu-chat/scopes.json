@@ -1,0 +1,12 @@
+[
+  "im:chat",
+  "im:chat:create",
+  "im:chat:update",
+  "im:chat:readonly",
+  "im:chat:read",
+  "im:chat:delete",
+  "im:chat.members:read",
+  "im:chat.members:write_only",
+  "im:chat.members:bot_access",
+  "im:chat:operate_as_owner"
+]

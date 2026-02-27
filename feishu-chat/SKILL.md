@@ -25,10 +25,16 @@ description: 飞书群聊管理（创建/更新/成员管理/解散）。通过�
 
 </details>
 
-**快速申请：** 在飞书控制台权限页面搜索以上 scope 逐个勾选，或运行：
+**快速申请（批量导入）：**
+1. 打开飞书开发者后台 → 你的应用 → **开发配置 > 权限管理**
+2. 找到 **批量导入导出** 区域，切换到 **导入** 页签
+3. 复制 `scopes.json` 的内容粘贴进去，点击 **申请开通**
+
 ```bash
-bash SKILL_DIR/apply-scopes.sh
+cat SKILL_DIR/scopes.json
 ```
+
+也可以通过 API 自动申请：`bash SKILL_DIR/apply-scopes.sh`
 
 ## 何时使用
 - 创建飞书群聊
