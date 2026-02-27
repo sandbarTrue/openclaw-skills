@@ -5,6 +5,60 @@ description: 飞书文档API操作（创建/读取/编辑/权限管理）。当�
 
 # Lark Manager - 飞书文档API操作
 
+## 前置条件：飞书权限
+
+使用本 skill 前，需要在飞书开放平台为你的应用申请以下权限：
+
+<details>
+<summary>📋 点击展开权限列表（35 个 scope）</summary>
+
+**文档操作（必需）：**
+- `docx:document` — 文档基础操作
+- `docx:document:readonly` — 读取文档
+- `docx:document:write_only` — 写入文档
+- `docx:document:create` — 创建新文档
+- `docs:document.content:read` — 读取文档内容
+- `docs:document.media:upload` — 上传图片到文档
+- `docs:document.media:download` — 下载文档中的图片
+- `docs:document:export` — 导出文档
+- `docs:document:import` — 导入文档
+- `docs:document:copy` — 复制文档
+- `docs:document.comment:create` — 创建评论
+- `docs:document.comment:read` — 读取评论
+
+**权限管理（用 add-permission / transfer-owner 时需要）：**
+- `docs:permission.member` — 权限基础操作
+- `docs:permission.member:create` — 添加协作者
+- `docs:permission.member:delete` — 移除协作者
+- `docs:permission.member:update` — 修改协作者权限
+- `docs:permission.member:transfer` — 转移文档所有权
+- `docs:permission.member:readonly` — 查看协作者列表
+- `docs:permission.member:retrieve` — 获取协作者详情
+- `docs:permission.member:auth` — 权限认证
+- `docs:permission.setting` — 权限设置
+- `docs:permission.setting:readonly` — 查看权限设置
+- `docs:permission.setting:read` — 读取权限设置
+- `docs:permission.setting:write_only` — 修改权限设置
+
+**云盘（创建文档到指定文件夹时需要）：**
+- `drive:file` — 文件基础操作
+- `drive:file:readonly` — 读取文件信息
+- `drive:file:upload` — 上传文件
+- `drive:file:download` — 下载文件
+- `drive:drive` — 云盘基础操作
+- `drive:drive:readonly` — 查看云盘
+- `space:folder:create` — 创建文件夹
+- `space:document:retrieve` — 获取文档信息
+- `space:document:move` — 移动文档
+- `space:document:delete` — 删除文档
+
+</details>
+
+**快速申请：** 在飞书控制台权限页面搜索以上 scope 逐个勾选，或运行：
+```bash
+bash SKILL_DIR/apply-scopes.sh
+```
+
 ## 何时使用
 - 创建飞书文档
 - 写入/编辑飞书文档内容（支持长文档，自动分批）

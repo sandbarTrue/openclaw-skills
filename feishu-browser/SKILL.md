@@ -7,6 +7,14 @@ description: 通过浏览器模拟真人操作飞书网页版。包括发送/读
 
 通过 OpenClaw browser tool (profile=openclaw) 操控飞书网页版，模拟真人操作。
 
+## 前置条件
+
+**本 skill 不需要飞书 API 权限。** 它通过浏览器模拟真人操作飞书网页版，只需要：
+1. OpenClaw browser 已启动（`browser action=start profile=openclaw`）
+2. 一个**已登录飞书的浏览器 session**（手动扫码登录一次即可）
+
+> 💡 适合场景：外部群（API 机器人进不去）、需要以个人账号身份操作
+
 ## 环境信息
 
 | 项目 | 值 |
