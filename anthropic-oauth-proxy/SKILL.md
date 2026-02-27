@@ -23,16 +23,18 @@ OpenClaw → localhost:8089 → [proxy] → api.anthropic.com (Claude)
 # Install Claude CLI (if you don't have it)
 npm install -g @anthropic-ai/claude-code
 
-# Login — this opens a browser for OAuth
-claude login
+# Generate a long-lived token (valid for 1 year)
+claude setup-token
+# This opens a browser for OAuth, then prints the token directly
+# No need to dig through credentials files
 
-# Your token is now stored at:
-# Linux/Mac: ~/.claude/credentials.json
-# The token starts with "sho_..." or similar
-
-cat ~/.claude/credentials.json
-# Look for "oauthToken" field
+# Copy the token output — it starts with "sho_..." or similar
 ```
+
+> **Why `setup-token` instead of `claude login`?**
+> - `setup-token` creates a **1-year** token and prints it directly — perfect for servers
+> - `claude login` stores a shorter-lived token in `~/.claude/credentials.json` — meant for local dev
+> - For headless/CI/server deployments, `setup-token` is the recommended approach
 
 ### 2. Start the Proxy
 
@@ -84,7 +86,7 @@ Without `MINIMAX_API_KEY`, the proxy works fine — it just won't have a backup 
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ANTHROPIC_OAUTH_TOKEN` | ✅ Yes | — | OAuth token from `claude login` |
+| `ANTHROPIC_OAUTH_TOKEN` | ✅ Yes | — | OAuth token from `claude setup-token` |
 | `MINIMAX_API_KEY` | No | — | MiniMax API key for backup brain |
 | `MINIMAX_MODEL` | No | `MiniMax-M2.5` | Model to use when on backup |
 | `PROXY_PORT` | No | `8089` | Port the proxy listens on |
