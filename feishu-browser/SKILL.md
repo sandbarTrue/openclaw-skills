@@ -11,8 +11,8 @@ description: 通过浏览器模拟真人操作飞书网页版。包括发送/读
 
 | 项目 | 值 |
 |------|-----|
-| 租户域名 | `YOUR_TENANT.feishu.cn` |
-| 消息页 | `https://YOUR_TENANT.feishu.cn/next/messenger/` |
+| 租户域名 | `ja484frx8z.feishu.cn` |
+| 消息页 | `https://ja484frx8z.feishu.cn/next/messenger/` |
 | Browser Profile | `openclaw` |
 | Viewport | 1280×800（最低要求，聊天列表需要 ≥1280 宽度） |
 
@@ -83,7 +83,7 @@ description: 通过浏览器模拟真人操作飞书网页版。包括发送/读
 browser action=start profile=openclaw
 
 # 导航
-browser action=navigate profile=openclaw targetUrl="https://YOUR_TENANT.feishu.cn/next/messenger/"
+browser action=navigate profile=openclaw targetUrl="https://ja484frx8z.feishu.cn/next/messenger/"
 
 # 截图查看当前状态
 browser action=screenshot profile=openclaw
@@ -114,3 +114,13 @@ A: 导航后等待 2-3 秒再操作。可用 screenshot 确认页面状态。
 
 ### Q: @人列表不出现？
 A: 确保输入框已 focus，然后用 execCommand 插入 `@` 字符，等待 1-2 秒。
+
+### Q: 聊天区域无法滚动？
+A: 飞书使用虚拟列表，`scrollTop` 和 `scrollBy` 不生效。必须用键盘 PageUp/PageDown：
+```
+# 先 hover 到聊天区域（main ref），再按 PageUp/PageDown
+browser action=act request={kind:"hover", ref:"<main_area_ref>"}
+browser action=act request={kind:"press", key:"PageUp"}   # 向上滚
+browser action=act request={kind:"press", key:"PageDown"}  # 向下滚
+```
+**⚠️ 已验证：JS 的 scrollTop/scrollBy/WheelEvent 对飞书虚拟列表无效，只有 PageUp/PageDown 有效。**
