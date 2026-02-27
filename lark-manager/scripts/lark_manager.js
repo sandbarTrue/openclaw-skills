@@ -1019,7 +1019,7 @@ async function cmdCreate(args) {
                     // Step 1: Create empty image block
                     const step1Resp = await axios.post(
                         `https://open.feishu.cn/open-apis/docx/v1/documents/${doc.document_id}/blocks/${doc.document_id}/children`,
-                        { children: [{ block_type: 27, image: {} }], index: -1 },
+                        { children: [{ block_type: 17, image: {} }], index: -1 },
                         { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
                     );
                     if (step1Resp.data.code !== 0) throw new Error(`Step 1 failed: ${JSON.stringify(step1Resp.data)}`);
