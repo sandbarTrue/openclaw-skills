@@ -187,15 +187,13 @@ if [ "$APPLY_CODE" = "0" ]; then
   echo -e "${GREEN}成功！${NC}"
   echo -e "${GREEN}✓ 已提交 ${#SCOPES[@]} 个权限申请，等待管理员审批${NC}"
   exit 0
+elif [ "$APPLY_CODE" = "212002" ]; then
+  echo -e "${GREEN}完成${NC}"
+  echo -e "${GREEN}✓ 所有 ${#SCOPES[@]} 个权限已就绪（无需额外申请）${NC}"
+  exit 0
 fi
 
-echo -e "${YELLOW}API 不可用 (code: ${APPLY_CODE})${NC}"
-
-# ---- 方式2: 检查已有权限，列出缺失的 ----
-echo ""
-echo -e "${YELLOW}正在检查当前已有权限...${NC}"
-CURRENT_RESP=$(curl -s -X GET 'https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal' \
-  -H "Authorization: Bearer ${TOKEN}" 2>&1 || true)
+echo -e "${YELLOW}需手动申请 (code: ${APPLY_CODE})${NC}"
 
 echo ""
 echo "============================================"
