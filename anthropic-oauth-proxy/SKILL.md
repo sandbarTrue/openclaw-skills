@@ -8,7 +8,8 @@ A single-file Node.js proxy that sits between OpenClaw and Anthropic's API:
 
 1. **OAuth Authentication** — Uses your Claude.ai OAuth token (from `claude` CLI) instead of a paid API key
 2. **Auto-Failover** _(optional)_ — If Claude returns 429 (rate limited), automatically switches to a backup provider (MiniMax M2.5) and switches back after cooldown
-3. **Zero Dependencies** — Pure Node.js, no `npm install` needed
+3. **Corporate Proxy Support** _(optional)_ — Routes outbound requests through your company's HTTP proxy (e.g. behind a corporate firewall)
+4. **Zero Required Dependencies** — Pure Node.js, no `npm install` needed. Optional deps enhance functionality
 
 ```
 OpenClaw → localhost:8089 → [proxy] → api.anthropic.com (Claude)
@@ -68,6 +69,29 @@ In your `openclaw.json`, set the model endpoint to the proxy:
 
 That's it. OpenClaw now uses your Claude subscription.
 
+## Optional: Corporate Proxy (`https-proxy-agent`)
+
+If your server is behind a corporate firewall/proxy (e.g. ByteDance CorpLink, corporate VPN), Node.js won't automatically route HTTPS requests through `HTTPS_PROXY`. Install `https-proxy-agent` to fix this:
+
+```bash
+npm install -g https-proxy-agent
+```
+
+Then set the proxy env var:
+
+```bash
+export HTTPS_PROXY="http://your-corp-proxy:8118"
+# Optional: skip proxy for internal domains
+export NO_PROXY=".internal.corp,.local"
+```
+
+The proxy auto-detects: if `https-proxy-agent` is installed AND `HTTPS_PROXY` is set, outbound requests go through your corporate proxy. Otherwise it connects directly — no errors, no config needed.
+
+> **When do you need this?**
+> - ✅ Server is behind corporate firewall (can't reach `api.anthropic.com` directly)
+> - ✅ Company requires all outbound traffic through an HTTP proxy
+> - ❌ Server has direct internet access → **skip this, you don't need it**
+
 ## Optional: MiniMax Backup Brain
 
 If you want automatic failover when Claude is rate-limited:
@@ -93,7 +117,8 @@ Without `MINIMAX_API_KEY`, the proxy works fine — it just won't have a backup 
 | `PROXY_HOST` | No | `127.0.0.1` | Host to bind to |
 | `COOLDOWN_MS` | No | `300000` (5min) | Cooldown before switching back to primary |
 | `STATE_FILE` | No | `./brain-state.json` | Where to persist failover state |
-| `HTTPS_PROXY` | No | — | Outbound proxy (for corporate networks) |
+| `HTTPS_PROXY` | No | — | Corporate outbound proxy URL (requires `npm i -g https-proxy-agent`) |
+| `NO_PROXY` | No | — | Comma-separated domains to bypass proxy (e.g. `.byted.org,.local`) |
 
 ## Endpoints
 
