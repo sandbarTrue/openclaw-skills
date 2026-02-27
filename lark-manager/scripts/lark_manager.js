@@ -465,6 +465,234 @@ async function _insertImageImportMode(token, documentId, img, imageAlt) {
 }
 
 /**
+ * Upload a .docx buffer to Feishu drive and import as a Feishu document.
+ * Returns { documentId, url } of the imported doc.
+ */
+async function importDocxAsFeishuDoc(token, docxBuffer, title, folderToken) {
+    // Step 1: Upload .docx to drive
+    const uploadFields = [
+        { name: 'parent_type', value: 'explorer' },
+        { name: 'parent_node', value: folderToken || '' },
+        { name: 'size', value: String(docxBuffer.length) },
+        { name: 'file_name', value: `${title || 'import'}.docx` },
+    ];
+    const { payload, boundary } = buildMultipartPayload(uploadFields, docxBuffer, `${title || 'import'}.docx`);
+
+    const uploadResp = await axios.post('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', payload, {
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': payload.length
+        },
+        maxContentLength: 50 * 1024 * 1024,
+        maxBodyLength: 50 * 1024 * 1024
+    });
+
+    if (uploadResp.data.code !== 0) throw new Error(`Upload .docx failed: ${JSON.stringify(uploadResp.data)}`);
+    const docxFileToken = uploadResp.data.data.file_token;
+    console.log(`   📤 Uploaded .docx to drive (file_token: ${docxFileToken})`);
+
+    // Step 2: Create import task
+    const importResp = await axios.post('https://open.feishu.cn/open-apis/drive/v1/import_tasks', {
+        file_extension: 'docx',
+        file_token: docxFileToken,
+        type: 'docx',
+        file_name: title || 'Imported Document',
+        point: { mount_type: 1, mount_key: folderToken || '' }
+    }, {
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+    });
+
+    if (importResp.data.code !== 0) throw new Error(`Import task failed: ${JSON.stringify(importResp.data)}`);
+    const ticket = importResp.data.data.ticket;
+    console.log(`   🔄 Import task created (ticket: ${ticket})`);
+
+    // Step 3: Poll for completion (max 90s)
+    for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const statusResp = await axios.get(`https://open.feishu.cn/open-apis/drive/v1/import_tasks/${ticket}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const result = statusResp.data.data?.result;
+        if (result && result.job_status === 0 && result.token) {
+            return { documentId: result.token, url: result.url || `https://feishu.cn/docx/${result.token}` };
+        } else if (result && result.job_status >= 100) {
+            throw new Error(`Import failed (status=${result.job_status}): ${result.job_error_msg}`);
+        }
+    }
+    throw new Error('Import timed out after 90s');
+}
+
+/**
+ * Build a complete .docx from markdown content (text + images).
+ * Uses python3 + python-docx for rich document construction.
+ * @param {string} markdownContent - raw markdown string
+ * @param {Array<{alt: string, path: string}>} images - resolved image info
+ * @returns {Buffer} .docx file data
+ */
+function buildFullDocxFromMarkdown(markdownContent, images) {
+    const { execSync } = require('child_process');
+    const os = require('os');
+    const tmpDir = os.tmpdir();
+    const mdPath = path.join(tmpDir, 'lm_full_' + Date.now() + '.md');
+    const docxPath = path.join(tmpDir, 'lm_full_' + Date.now() + '.docx');
+    const imgMapPath = path.join(tmpDir, 'lm_imgmap_' + Date.now() + '.json');
+
+    try {
+        fs.writeFileSync(mdPath, markdownContent);
+        fs.writeFileSync(imgMapPath, JSON.stringify(images));
+
+        const pyScript = `
+import sys, json, os, re
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+md_path = sys.argv[1]
+docx_path = sys.argv[2]
+img_map_path = sys.argv[3]
+
+with open(md_path, 'r') as f:
+    lines = f.readlines()
+
+with open(img_map_path, 'r') as f:
+    images = json.load(f)
+
+# Build image lookup: alt -> path
+img_lookup = {img['alt']: img['path'] for img in images if os.path.exists(img['path'])}
+
+doc = Document()
+
+in_code = False
+code_lines = []
+code_lang = ''
+in_table = False
+table_rows = []
+
+def flush_code():
+    if code_lines:
+        p = doc.add_paragraph()
+        run = p.add_run('\\n'.join(code_lines))
+        run.font.name = 'Courier New'
+        run.font.size = Pt(9)
+
+def flush_table():
+    if len(table_rows) < 2:
+        return
+    # Skip separator row
+    data_rows = [r for r in table_rows if not all(c.strip().replace('-','') == '' for c in r)]
+    if not data_rows:
+        return
+    cols = len(data_rows[0])
+    table = doc.add_table(rows=len(data_rows), cols=cols, style='Table Grid')
+    for i, row in enumerate(data_rows):
+        for j, cell in enumerate(row):
+            if j < cols:
+                table.rows[i].cells[j].text = cell.strip()
+
+for line in lines:
+    line_s = line.rstrip('\\n')
+
+    # Code block
+    if line_s.startswith('\`\`\`'):
+        if in_code:
+            flush_code()
+            code_lines = []
+            in_code = False
+        else:
+            in_code = True
+            code_lang = line_s[3:].strip()
+        continue
+    if in_code:
+        code_lines.append(line_s)
+        continue
+
+    # Table
+    if line_s.strip().startswith('|') and line_s.strip().endswith('|'):
+        cells = [c.strip() for c in line_s.strip().strip('|').split('|')]
+        table_rows.append(cells)
+        in_table = True
+        continue
+    elif in_table:
+        flush_table()
+        table_rows = []
+        in_table = False
+
+    # Image
+    img_match = re.match(r'^!\\[([^\\]]*)\\]\\(([^)]+)\\)', line_s)
+    if img_match:
+        alt = img_match.group(1)
+        img_path = img_match.group(2)
+        # Try direct path first, then lookup by alt
+        actual_path = img_path if os.path.exists(img_path) else img_lookup.get(alt)
+        if actual_path and os.path.exists(actual_path):
+            try:
+                doc.add_picture(actual_path, width=Inches(5.5))
+                last_p = doc.paragraphs[-1]
+                last_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            except Exception as e:
+                doc.add_paragraph(f'[Image: {alt}] (load error: {e})')
+        else:
+            doc.add_paragraph(f'[Image: {alt}] ({img_path})')
+        continue
+
+    # Headings
+    if line_s.startswith('### '):
+        doc.add_heading(line_s[4:], level=3)
+    elif line_s.startswith('## '):
+        doc.add_heading(line_s[3:], level=2)
+    elif line_s.startswith('# '):
+        doc.add_heading(line_s[2:], level=1)
+    elif line_s.startswith('- ') or line_s.startswith('* '):
+        doc.add_paragraph(line_s[2:], style='List Bullet')
+    elif re.match(r'^\\d+\\.\\s', line_s):
+        doc.add_paragraph(re.sub(r'^\\d+\\.\\s', '', line_s), style='List Number')
+    elif line_s.startswith('> '):
+        p = doc.add_paragraph(line_s[2:])
+        p.style = 'Quote' if 'Quote' in [s.name for s in doc.styles] else 'Normal'
+    elif line_s.strip() == '---':
+        doc.add_paragraph('─' * 50)
+    elif line_s.strip():
+        doc.add_paragraph(line_s)
+
+# Flush remaining
+if in_code:
+    flush_code()
+if in_table:
+    flush_table()
+
+doc.save(docx_path)
+print(f'OK:{os.path.getsize(docx_path)}')
+`;
+        const pyPath = path.join(tmpDir, 'lm_buildfull_' + Date.now() + '.py');
+        fs.writeFileSync(pyPath, pyScript);
+
+        const pythonPaths = ['/usr/bin/python3', 'python3', '/usr/local/bin/python3'];
+        for (const pyBin of pythonPaths) {
+            try {
+                const result = execSync(`${pyBin} "${pyPath}" "${mdPath}" "${docxPath}" "${imgMapPath}"`, {
+                    timeout: 30000, stdio: 'pipe'
+                }).toString().trim();
+                if (result.startsWith('OK:') && fs.existsSync(docxPath)) {
+                    const buf = fs.readFileSync(docxPath);
+                    console.log(`   📦 Built full .docx (${buf.length} bytes, ${images.length} images)`);
+                    try { fs.unlinkSync(pyPath); } catch {}
+                    return buf;
+                }
+            } catch (e) {
+                // Try next python
+            }
+        }
+        try { fs.unlinkSync(pyPath); } catch {}
+        throw new Error('Failed to build .docx with python-docx');
+    } finally {
+        try { fs.unlinkSync(mdPath); } catch {}
+        try { fs.unlinkSync(docxPath); } catch {}
+        try { fs.unlinkSync(imgMapPath); } catch {}
+    }
+}
+
+/**
  * Build a .docx file containing a single image
  * Uses python3 + python-docx if available, falls back to manual ZIP construction
  * @returns {Buffer} .docx file data
@@ -1308,16 +1536,108 @@ async function cmdCreate(args) {
     console.log(`📝 Creating document: ${title}`);
 
     const token = await getTenantAccessToken();
-    const doc = await createDocument(token, title, folder || '');
-
-    console.log(`✅ Document created!`);
-    console.log(`   URL: https://feishu.cn/docx/${doc.document_id}`);
-    console.log(`   ID: ${doc.document_id}`);
 
     if (markdown) {
-        console.log(`\n📄 Uploading content from: ${markdown}`);
         const content = fs.readFileSync(markdown, 'utf8');
         const allBlocks = parseMarkdownToBlocks(content);
+        const hasImages = allBlocks.some(b => b._imageUrl);
+
+        // Check if we should use full-import mode (enterprise tenant with images)
+        if (hasImages) {
+            console.log(`\n📄 Document has images — checking tenant type...`);
+            // Quick probe: try uploading to a dummy block_id to detect enterprise tenant
+            let isEnterprise = _tenantImageMode === 'import';
+            if (!isEnterprise) {
+                try {
+                    const probeForm = [
+                        { name: 'parent_type', value: 'docx_image' },
+                        { name: 'parent_node', value: 'probe_test_000' },
+                        { name: 'size', value: '10' },
+                        { name: 'file_name', value: 'probe.png' },
+                    ];
+                    const { payload, boundary } = buildMultipartPayload(probeForm, Buffer.from('0000000000'), 'probe.png');
+                    await axios.post('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', payload, {
+                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': payload.length },
+                        maxContentLength: 50 * 1024 * 1024, maxBodyLength: 50 * 1024 * 1024
+                    });
+                } catch (e) {
+                    if (e.response?.data?.code === 1061044) {
+                        isEnterprise = true;
+                        _tenantImageMode = 'import';
+                    }
+                }
+            }
+
+            if (isEnterprise) {
+                console.log(`   🏢 Enterprise tenant — using full document import mode`);
+                // Resolve all images
+                const images = [];
+                for (const block of allBlocks) {
+                    if (block._imageUrl) {
+                        const imgData = await loadImageData(block._imageUrl);
+                        if (imgData) {
+                            const tmpPath = path.join(require('os').tmpdir(), 'lm_img_' + Date.now() + '_' + imgData.fileName);
+                            fs.writeFileSync(tmpPath, imgData.fileData);
+                            images.push({ alt: block._imageAlt || '', path: tmpPath, _tmpPath: tmpPath });
+                        }
+                    }
+                }
+
+                try {
+                    const docxBuffer = buildFullDocxFromMarkdown(content, images);
+                    const imported = await importDocxAsFeishuDoc(token, docxBuffer, title, folder || '');
+                    console.log(`\n✅ Document imported with images!`);
+                    console.log(`   URL: ${imported.url}`);
+                    console.log(`   ID: ${imported.documentId}`);
+
+                    // Set title via update (import may not preserve title)
+                    try {
+                        await axios.patch(
+                            `https://open.feishu.cn/open-apis/docx/v1/documents/${imported.documentId}`,
+                            { title: title },
+                            { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+                        );
+                    } catch {}
+
+                    // Handle owner transfer for imported doc
+                    const ownerUserId = userId || DEFAULT_OWNER_ID;
+                    if (ownerUserId && ownerUserId !== 'YOUR_OPEN_ID') {
+                        console.log(`\n🔓 Transferring document owner to: ${ownerUserId}`);
+                        try {
+                            await addPermissionMember(token, imported.documentId, ownerUserId, 'full_access', false);
+                            await transferOwner(token, imported.documentId, ownerUserId, false);
+                            console.log(`✅ Document owner transferred successfully!`);
+                        } catch (err) {
+                            console.warn(`⚠️  Owner transfer failed: ${err.message}`);
+                            try {
+                                await addPermissionMember(token, imported.documentId, ownerUserId, 'full_access', false);
+                                console.log(`✅ Full access permission assigned as fallback.`);
+                            } catch (err2) {
+                                console.warn(`⚠️  Fallback also failed: ${err2.message}`);
+                            }
+                        }
+                    }
+
+                    return; // Done — skip the normal block-by-block flow
+                } catch (importErr) {
+                    console.warn(`⚠️  Full import failed: ${importErr.message}`);
+                    console.log(`   Falling back to block-by-block mode...`);
+                } finally {
+                    // Clean up temp images
+                    for (const img of images) {
+                        try { fs.unlinkSync(img._tmpPath); } catch {}
+                    }
+                }
+            }
+        }
+
+        // Normal path: create empty doc, then fill block by block
+        const doc = await createDocument(token, title, folder || '');
+        console.log(`✅ Document created!`);
+        console.log(`   URL: https://feishu.cn/docx/${doc.document_id}`);
+        console.log(`   ID: ${doc.document_id}`);
+
+        console.log(`\n📄 Uploading content from: ${markdown}`);
 
         // Separate normal blocks from table descendants
         let normalBlocks = [];
@@ -1395,6 +1715,12 @@ async function cmdCreate(args) {
         }
 
         console.log(`✅ Content uploaded (${totalBlocks} blocks, ${tableCount} tables, ${imageCount} images)`);
+    } else {
+        // No markdown file — just create empty doc
+        const doc = await createDocument(token, title, folder || '');
+        console.log(`✅ Document created!`);
+        console.log(`   URL: https://feishu.cn/docx/${doc.document_id}`);
+        console.log(`   ID: ${doc.document_id}`);
     }
 
     // Auto-transfer owner: default to the user if no user specified
