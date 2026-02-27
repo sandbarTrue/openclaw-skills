@@ -198,64 +198,63 @@ async function updateBlock(token, documentId, blockId, updates) {
 }
 
 /**
- * Upload an image to a Feishu document and return the file_token
- * @param {string} token - tenant access token
- * @param {string} parentNode - block_id of the image block (used as parent_node for upload)
- * @param {string} imageSource - URL or local file path
- * @returns {string|null} file_token or null on failure
+ * Download image from URL or read from local file
+ * @returns {{ fileData: Buffer, fileName: string } | null}
  */
-async function uploadImageToDoc(token, parentNode, imageSource) {
-    let fileData, fileName;
-    
+async function loadImageData(imageSource) {
     if (imageSource.startsWith('http://') || imageSource.startsWith('https://')) {
-        // Download from URL
         try {
             const resp = await axios.get(imageSource, { responseType: 'arraybuffer', timeout: 30000 });
-            fileData = Buffer.from(resp.data);
-            // Extract filename from URL
             const urlPath = new URL(imageSource).pathname;
-            fileName = path.basename(urlPath) || 'image.jpg';
+            return { fileData: Buffer.from(resp.data), fileName: path.basename(urlPath) || 'image.jpg' };
         } catch (err) {
             console.error(`⚠️  Failed to download image: ${imageSource} - ${err.message}`);
             return null;
         }
     } else {
-        // Local file
         if (!fs.existsSync(imageSource)) {
             console.error(`⚠️  Image file not found: ${imageSource}`);
             return null;
         }
-        fileData = fs.readFileSync(imageSource);
-        fileName = path.basename(imageSource);
+        return { fileData: fs.readFileSync(imageSource), fileName: path.basename(imageSource) };
     }
+}
 
-    // Upload to Feishu drive as docx_image
-    const FormData = require('form-data') || null;
-    
-    // Use manual multipart since form-data may not be available
+/**
+ * Build multipart payload for Feishu media upload
+ */
+function buildMultipartPayload(fields, fileData, fileName) {
     const boundary = 'feishu_img_' + Date.now();
+    const ext = fileName.split('.').pop().toLowerCase();
+    const mimeTypes = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+    const contentType = mimeTypes[ext] || 'image/jpeg';
+    
+    let parts = [];
+    for (const f of fields) {
+        parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${f.name}"\r\n\r\n${f.value}\r\n`));
+    }
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${contentType}\r\n\r\n`));
+    parts.push(fileData);
+    parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+    return { payload: Buffer.concat(parts), boundary };
+}
+
+/**
+ * Upload image to Feishu drive via medias/upload_all
+ * @param {string} token - tenant access token
+ * @param {string} parentNode - parent_node for upload (block_id or doc_id)
+ * @param {Buffer} fileData - image data
+ * @param {string} fileName - file name
+ * @returns {{ fileToken: string|null, errorCode: number|null }}
+ */
+async function uploadMediaToFeishu(token, parentNode, fileData, fileName) {
     const fields = [
         { name: 'parent_type', value: 'docx_image' },
         { name: 'parent_node', value: parentNode },
         { name: 'size', value: String(fileData.length) },
         { name: 'file_name', value: fileName },
     ];
-    
-    let parts = [];
-    for (const f of fields) {
-        parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${f.name}"\r\n\r\n${f.value}\r\n`));
-    }
-    
-    // Determine content type
-    const ext = fileName.split('.').pop().toLowerCase();
-    const mimeTypes = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
-    const contentType = mimeTypes[ext] || 'image/jpeg';
-    
-    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${contentType}\r\n\r\n`));
-    parts.push(fileData);
-    parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
-    
-    const payload = Buffer.concat(parts);
+    const { payload, boundary } = buildMultipartPayload(fields, fileData, fileName);
     
     try {
         const resp = await axios.post('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', payload, {
@@ -269,14 +268,364 @@ async function uploadImageToDoc(token, parentNode, imageSource) {
         });
         
         if (resp.data.code === 0 && resp.data.data?.file_token) {
-            return resp.data.data.file_token;
+            return { fileToken: resp.data.data.file_token, errorCode: null };
         }
-        console.error(`⚠️  Image upload API error:`, JSON.stringify(resp.data));
-        return null;
+        return { fileToken: null, errorCode: resp.data.code };
     } catch (err) {
+        // Axios errors: extract response data if available
+        if (err.response?.data) {
+            const code = err.response.data.code;
+            console.error(`⚠️  Image upload failed: code=${code} msg=${err.response.data.msg}`);
+            return { fileToken: null, errorCode: code };
+        }
         console.error(`⚠️  Image upload failed: ${err.message}`);
-        return null;
+        return { fileToken: null, errorCode: -1 };
     }
+}
+
+/**
+ * Upload an image to a Feishu document and return the file_token
+ * Uses block_id as parent_node (works on personal tenants)
+ */
+async function uploadImageToDoc(token, parentNode, imageSource) {
+    const img = await loadImageData(imageSource);
+    if (!img) return null;
+    const { fileToken } = await uploadMediaToFeishu(token, parentNode, img.fileData, img.fileName);
+    return fileToken;
+}
+
+// Tenant image upload capability cache (per process lifetime)
+let _tenantImageMode = null; // 'block' | 'import'
+
+/**
+ * Insert image into document — auto-detect tenant capability
+ * 
+ * Strategy A (block mode): 3-step — create empty image block → upload to block_id → PATCH replace_image
+ * Strategy B (import mode): for enterprise tenants where block_id upload returns 1061044
+ *   Uses docx import: build a .docx file with embedded image → import into existing doc
+ * 
+ * @param {string} token - tenant access token
+ * @param {string} documentId - target document ID
+ * @param {string} imageSource - URL or local file path
+ * @param {string} [imageAlt] - alt text for fallback
+ * @returns {boolean} success
+ */
+async function insertImageIntoDoc(token, documentId, imageSource, imageAlt) {
+    const img = await loadImageData(imageSource);
+    if (!img) return false;
+    
+    // Try Strategy A first (unless we already know this tenant needs import mode)
+    if (_tenantImageMode !== 'import') {
+        const result = await _insertImageBlockMode(token, documentId, img);
+        if (result === true) {
+            _tenantImageMode = 'block';
+            return true;
+        }
+        if (result === 'parent_not_exist') {
+            console.log(`   ℹ️  Enterprise tenant detected — switching to import mode`);
+            _tenantImageMode = 'import';
+        } else {
+            return false; // Other error, don't fallback
+        }
+    }
+    
+    // Strategy B: import mode
+    return await _insertImageImportMode(token, documentId, img, imageAlt);
+}
+
+/**
+ * Strategy A: 3-step block mode (personal/standard tenants)
+ * @returns {true|'parent_not_exist'|false}
+ */
+async function _insertImageBlockMode(token, documentId, img) {
+    try {
+        // Step 1: Create empty image block
+        const step1Resp = await axios.post(
+            `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+            { children: [{ block_type: 27, image: {} }], index: -1 },
+            { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+        );
+        if (step1Resp.data.code !== 0) throw new Error(`Step 1 failed: ${JSON.stringify(step1Resp.data)}`);
+        const imgBlockId = step1Resp.data.data.children[0].block_id;
+        
+        // Step 2: Upload image with parent_node = block_id
+        const { fileToken, errorCode } = await uploadMediaToFeishu(token, imgBlockId, img.fileData, img.fileName);
+        if (!fileToken) {
+            if (errorCode === 1061044) return 'parent_not_exist';
+            throw new Error(`Step 2 failed: upload error code ${errorCode}`);
+        }
+        
+        // Step 3: PATCH replace_image
+        const step3Resp = await axios.patch(
+            `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${imgBlockId}`,
+            { replace_image: { token: fileToken }, document_revision_id: -1 },
+            { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+        );
+        if (step3Resp.data.code !== 0) throw new Error(`Step 3 failed: ${JSON.stringify(step3Resp.data)}`);
+        return true;
+    } catch (err) {
+        if (err.message && err.message.includes('parent_not_exist')) return 'parent_not_exist';
+        console.error(`   ⚠️  Block mode failed: ${err.message}`);
+        return false;
+    }
+}
+
+/**
+ * Strategy B: Import mode (enterprise tenants like ByteDance)
+ * Creates a minimal .docx with the image, imports it as a NEW Feishu doc.
+ * Returns the imported document ID (caller handles merging/linking).
+ * 
+ * For single-image inserts, creates a standalone imported doc and adds a link
+ * in the target document pointing to the image.
+ */
+async function _insertImageImportMode(token, documentId, img, imageAlt) {
+    try {
+        // Build .docx with the image
+        const docxBuffer = buildMinimalDocxWithImage(img.fileData, img.fileName, imageAlt);
+        
+        // Step 1: Upload .docx to drive
+        const uploadFields = [
+            { name: 'parent_type', value: 'explorer' },
+            { name: 'parent_node', value: '' },
+            { name: 'size', value: String(docxBuffer.length) },
+            { name: 'file_name', value: 'image_import.docx' },
+        ];
+        const { payload, boundary } = buildMultipartPayload(uploadFields, docxBuffer, 'image_import.docx');
+        
+        const uploadResp = await axios.post('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', payload, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                'Content-Length': payload.length
+            },
+            maxContentLength: 50 * 1024 * 1024,
+            maxBodyLength: 50 * 1024 * 1024
+        });
+        
+        if (uploadResp.data.code !== 0) throw new Error(`Upload .docx failed: ${JSON.stringify(uploadResp.data)}`);
+        const docxFileToken = uploadResp.data.data.file_token;
+        
+        // Step 2: Create import task
+        const importResp = await axios.post('https://open.feishu.cn/open-apis/drive/v1/import_tasks', {
+            file_extension: 'docx',
+            file_token: docxFileToken,
+            type: 'docx',
+            point: { mount_type: 1, mount_key: '' }
+        }, {
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+        });
+        
+        if (importResp.data.code !== 0) throw new Error(`Import task failed: ${JSON.stringify(importResp.data)}`);
+        const ticket = importResp.data.data.ticket;
+        
+        // Step 3: Poll for completion (max 60s)
+        let importedDocId = null;
+        let importedUrl = null;
+        for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 3000));
+            const statusResp = await axios.get(`https://open.feishu.cn/open-apis/drive/v1/import_tasks/${ticket}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const result = statusResp.data.data?.result;
+            if (result && result.job_status === 0 && result.token) {
+                importedDocId = result.token;
+                importedUrl = result.url;
+                break;
+            } else if (result && result.job_status >= 100) {
+                // 100+ = definite failure (129=save_as_import etc)
+                throw new Error(`Import failed (status=${result.job_status}): ${result.job_error_msg}`);
+            }
+        }
+        if (!importedDocId) throw new Error('Import timed out after 60s');
+        
+        // Step 4: Add a text block in target doc with link to the imported image doc
+        // (Enterprise tenants don't support cross-doc image token references)
+        const linkUrl = importedUrl || `https://feishu.cn/docx/${importedDocId}`;
+        const altLabel = imageAlt || '图片';
+        
+        // Add the image link as a clickable text block
+        await axios.post(
+            `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+            { children: [{
+                block_type: 2,
+                text: { elements: [
+                    { text_run: { content: `📷 ${altLabel} `, text_element_style: { bold: true } } },
+                    { text_run: { content: '📎 查看图片', text_element_style: { link: { url: encodeURI(linkUrl) }, bold: true, underline: true } } }
+                ] }
+            }], index: -1 },
+            { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
+        );
+        
+        console.log(`   📎 Image imported as linked doc: ${importedDocId}`);
+        return true;
+    } catch (err) {
+        console.error(`   ⚠️  Import mode failed: ${err.message}`);
+        return false;
+    }
+}
+
+/**
+ * Build a .docx file containing a single image
+ * Uses python3 + python-docx if available, falls back to manual ZIP construction
+ * @returns {Buffer} .docx file data
+ */
+function buildMinimalDocxWithImage(imageData, imageName, altText) {
+    const { execSync } = require('child_process');
+    const os = require('os');
+    const tmpDir = os.tmpdir();
+    const imgPath = path.join(tmpDir, 'lm_img_' + Date.now() + '_' + imageName);
+    const docxPath = path.join(tmpDir, 'lm_docx_' + Date.now() + '.docx');
+    
+    try {
+        fs.writeFileSync(imgPath, imageData);
+        
+        // Try python-docx first (produces fully valid .docx files)
+        const pyScript = `
+import sys
+from docx import Document
+from docx.shared import Inches
+doc = Document()
+doc.add_picture(sys.argv[1], width=Inches(5))
+doc.save(sys.argv[2])
+`;
+        // Write python script to temp file to avoid shell escaping issues
+        const pyPath = path.join(tmpDir, 'lm_mkdocx_' + Date.now() + '.py');
+        fs.writeFileSync(pyPath, pyScript);
+        
+        const pyEnv = { ...process.env, PYTHONPATH: '/usr/local/lib/python3.8/dist-packages:/usr/local/lib/python3/dist-packages:/usr/lib/python3/dist-packages' };
+        const pythonPaths = ['/usr/bin/python3', 'python3', '/usr/local/bin/python3'];
+        
+        for (const pyBin of pythonPaths) {
+            try {
+                execSync(`${pyBin} "${pyPath}" "${imgPath}" "${docxPath}"`, {
+                    timeout: 15000, stdio: 'pipe', env: pyEnv
+                });
+                if (fs.existsSync(docxPath)) {
+                    const result = fs.readFileSync(docxPath);
+                    console.log(`   📦 Built .docx via python-docx (${result.length} bytes)`);
+                    try { fs.unlinkSync(pyPath); } catch {}
+                    return result;
+                }
+            } catch {}
+        }
+        try { fs.unlinkSync(pyPath); } catch {}
+        
+        // Try pip install as last resort
+        console.log(`   ℹ️  python-docx not found, trying pip install...`);
+        try {
+            execSync('pip3 install python-docx -q --break-system-packages 2>/dev/null || pip3 install python-docx -q', { timeout: 30000, stdio: 'pipe' });
+            fs.writeFileSync(pyPath, pyScript);
+            execSync(`python3 "${pyPath}" "${imgPath}" "${docxPath}"`, { timeout: 15000, stdio: 'pipe' });
+            try { fs.unlinkSync(pyPath); } catch {}
+            if (fs.existsSync(docxPath)) {
+                const result = fs.readFileSync(docxPath);
+                console.log(`   📦 Built .docx via python-docx after install (${result.length} bytes)`);
+                return result;
+            }
+        } catch (installErr) {
+            console.log(`   ℹ️  pip install failed, falling back to manual .docx construction`);
+        }
+        try { fs.unlinkSync(pyPath); } catch {}
+        
+        // Fallback: manual OOXML ZIP construction
+        return _buildDocxManually(imageData, imageName);
+    } finally {
+        try { fs.unlinkSync(imgPath); } catch {}
+        try { fs.unlinkSync(docxPath); } catch {}
+    }
+}
+
+/**
+ * Manual .docx construction (fallback when python-docx is unavailable)
+ */
+function _buildDocxManually(imageData, imageName) {
+    const ext = imageName.split('.').pop().toLowerCase();
+    const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+    const mime = mimeMap[ext] || 'image/png';
+    const imgExt = ext === 'jpg' ? 'jpeg' : ext;
+    
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="${imgExt}" ContentType="${mime}"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`;
+    const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+    const wordRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.${imgExt}"/></Relationships>`;
+    const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="5000000" cy="3500000"/><wp:docPr id="1" name="Image"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="${imageName}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5000000" cy="3500000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>`;
+
+    const files = [
+        { path: '[Content_Types].xml', data: Buffer.from(contentTypes), compress: true },
+        { path: '_rels/.rels', data: Buffer.from(rels), compress: true },
+        { path: 'word/document.xml', data: Buffer.from(documentXml), compress: true },
+        { path: 'word/_rels/document.xml.rels', data: Buffer.from(wordRels), compress: true },
+        { path: `word/media/image1.${imgExt}`, data: imageData, compress: false },
+    ];
+    
+    return _buildZip(files);
+}
+
+function _buildZip(files) {
+    const entries = [];
+    let offset = 0;
+    const centralDir = [];
+    
+    for (const file of files) {
+        const nameBuffer = Buffer.from(file.path);
+        const rawData = file.data;
+        const crc = _crc32(rawData);
+        let compressedData, method;
+        
+        if (file.compress) {
+            const deflated = require('zlib').deflateRawSync(rawData);
+            compressedData = deflated.length < rawData.length ? deflated : rawData;
+            method = deflated.length < rawData.length ? 8 : 0;
+        } else {
+            compressedData = rawData;
+            method = 0;
+        }
+        
+        const lh = Buffer.alloc(30);
+        lh.writeUInt32LE(0x04034b50, 0);
+        lh.writeUInt16LE(20, 4);
+        lh.writeUInt16LE(0, 6);
+        lh.writeUInt16LE(method, 8);
+        lh.writeUInt32LE(crc, 14);
+        lh.writeUInt32LE(compressedData.length, 18);
+        lh.writeUInt32LE(rawData.length, 22);
+        lh.writeUInt16LE(nameBuffer.length, 26);
+        entries.push(lh, nameBuffer, compressedData);
+        
+        const cd = Buffer.alloc(46);
+        cd.writeUInt32LE(0x02014b50, 0);
+        cd.writeUInt16LE(20, 4);
+        cd.writeUInt16LE(20, 6);
+        cd.writeUInt16LE(method, 10);
+        cd.writeUInt32LE(crc, 16);
+        cd.writeUInt32LE(compressedData.length, 20);
+        cd.writeUInt32LE(rawData.length, 24);
+        cd.writeUInt16LE(nameBuffer.length, 28);
+        cd.writeUInt32LE(offset, 42);
+        centralDir.push(cd, nameBuffer);
+        
+        offset += 30 + nameBuffer.length + compressedData.length;
+    }
+    
+    const cdSize = centralDir.reduce((s, b) => s + b.length, 0);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(files.length, 8);
+    eocd.writeUInt16LE(files.length, 10);
+    eocd.writeUInt32LE(cdSize, 12);
+    eocd.writeUInt32LE(offset, 16);
+    
+    return Buffer.concat([...entries, ...centralDir, eocd]);
+}
+
+function _crc32(buf) {
+    let crc = 0xFFFFFFFF;
+    const table = _crc32.t || (_crc32.t = (() => {
+        const t = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) { let c = i; for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[i] = c; }
+        return t;
+    })());
+    for (let i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
 /**
@@ -1009,39 +1358,18 @@ async function cmdCreate(args) {
                     totalBlocks += normalBlocks.length;
                     normalBlocks = [];
                 }
-                // Insert image via 3-step process:
-                // 1. Create empty image block → get block_id
-                // 2. Upload image with parent_node = image block_id
-                // 3. PATCH block with replace_image to associate file_token
+                // Insert image — auto-detects tenant type:
+                // Strategy A (block mode): 3-step — create block → upload to block_id → PATCH
+                // Strategy B (import mode): for enterprise tenants — build .docx → import
                 console.log(`   📷 Uploading image: ${block._imageAlt || block._imageUrl.substring(0, 60)}...`);
                 
-                try {
-                    // Step 1: Create empty image block
-                    const step1Resp = await axios.post(
-                        `https://open.feishu.cn/open-apis/docx/v1/documents/${doc.document_id}/blocks/${doc.document_id}/children`,
-                        { children: [{ block_type: 17, image: {} }], index: -1 },
-                        { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
-                    );
-                    if (step1Resp.data.code !== 0) throw new Error(`Step 1 failed: ${JSON.stringify(step1Resp.data)}`);
-                    const imgBlockId = step1Resp.data.data.children[0].block_id;
-                    
-                    // Step 2: Upload image with parent_node = image block_id
-                    const fileToken = await uploadImageToDoc(token, imgBlockId, block._imageUrl);
-                    if (!fileToken) throw new Error('Image upload failed');
-                    
-                    // Step 3: PATCH image block with replace_image
-                    const step3Resp = await axios.patch(
-                        `https://open.feishu.cn/open-apis/docx/v1/documents/${doc.document_id}/blocks/${imgBlockId}`,
-                        { replace_image: { token: fileToken } },
-                        { headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
-                    );
-                    if (step3Resp.data.code !== 0) throw new Error(`Step 3 failed: ${JSON.stringify(step3Resp.data)}`);
-                    
+                const imgSuccess = await insertImageIntoDoc(token, doc.document_id, block._imageUrl, block._imageAlt);
+                if (imgSuccess) {
                     imageCount++;
                     totalBlocks++;
                     console.log(`   ✅ Image inserted (${imageCount})`);
-                } catch (imgErr) {
-                    console.error(`   ⚠️  Image insert failed: ${imgErr.message}`);
+                } else {
+                    console.error(`   ⚠️  Image insert failed, falling back to link`);
                     // Fallback: insert as clickable link
                     const encodedUrl = encodeURI(block._imageUrl).replace(/%25/g, '%');
                     normalBlocks.push({
