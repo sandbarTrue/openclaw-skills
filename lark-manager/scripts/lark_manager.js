@@ -1632,7 +1632,7 @@ async function cmdCreate(args) {
         }
 
         // Normal path: create empty doc, then fill block by block
-        const doc = await createDocument(token, title, folder || '');
+        var doc = await createDocument(token, title, folder || '');
         console.log(`✅ Document created!`);
         console.log(`   URL: https://feishu.cn/docx/${doc.document_id}`);
         console.log(`   ID: ${doc.document_id}`);
@@ -1717,7 +1717,7 @@ async function cmdCreate(args) {
         console.log(`✅ Content uploaded (${totalBlocks} blocks, ${tableCount} tables, ${imageCount} images)`);
     } else {
         // No markdown file — just create empty doc
-        const doc = await createDocument(token, title, folder || '');
+        var doc = await createDocument(token, title, folder || '');
         console.log(`✅ Document created!`);
         console.log(`   URL: https://feishu.cn/docx/${doc.document_id}`);
         console.log(`   ID: ${doc.document_id}`);
