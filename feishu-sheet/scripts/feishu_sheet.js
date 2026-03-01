@@ -465,6 +465,98 @@ async function cmdApplyPerms(args) {
   }
 }
 
+async function cmdSetup(args) {
+  console.log('🚀 feishu-sheet setup\n');
+
+  // Step 1: Check credentials
+  console.log('Step 1: Checking credentials...');
+  try {
+    await getToken();
+    console.log(`  ✅ App ID: ${APP_ID.substring(0, 10)}...`);
+    console.log(`  ✅ Token obtained\n`);
+  } catch (e) {
+    console.error('  ❌ Failed to get token. Check your FEISHU_APP_ID / FEISHU_APP_SECRET');
+    console.error('  Set in openclaw.json (channels.feishu.appId/appSecret) or env vars.\n');
+    process.exit(1);
+  }
+
+  // Step 2: Run permission check
+  console.log('Step 2: Checking permissions (creating test spreadsheet)...');
+  const checks = [];
+  const createRes = await req('POST', '/open-apis/sheets/v3/spreadsheets', { title: '__setup_test__' });
+  const canCreate = createRes.code === 0;
+  checks.push({ name: 'Create spreadsheet', ok: canCreate, scope: 'sheets:spreadsheet:create' });
+
+  if (canCreate) {
+    const ss = createRes.data.spreadsheet.spreadsheet_token;
+    const meta = await req('GET', `/open-apis/sheets/v3/spreadsheets/${ss}/sheets/query`);
+    const sid = meta.data?.sheets?.[0]?.sheet_id;
+    checks.push({ name: 'Read sheets', ok: meta.code === 0, scope: 'sheets:spreadsheet:read' });
+
+    const writeRes = await req('PUT', `/open-apis/sheets/v2/spreadsheets/${ss}/values`, {
+      valueRange: { range: `${sid}!A1:B2`, values: [['test','data'],['a','b']] }
+    });
+    checks.push({ name: 'Write data', ok: writeRes.code === 0, scope: 'sheets:spreadsheet:write_only' });
+
+    const dvRes = await req('POST', `/open-apis/sheets/v2/spreadsheets/${ss}/dataValidation`, {
+      range: `${sid}!A2:A2`, dataValidationType: 'list',
+      dataValidation: { conditionValues: ['X','Y'], options: { highlightValidData: true, colors: ['#FF0000','#00FF00'] } }
+    });
+    checks.push({ name: 'Color dropdown', ok: dvRes.code === 0, scope: 'sheets:spreadsheet' });
+
+    const permRes = await req('PATCH', `/open-apis/drive/v1/permissions/${ss}/public?type=sheet`, {
+      external_access_entity: 'open', link_share_entity: 'anyone_readable'
+    });
+    checks.push({ name: 'Set permissions', ok: permRes.code === 0, scope: 'docs:permission' });
+
+    await req('DELETE', `/open-apis/drive/v1/files/${ss}?type=sheet`);
+  }
+
+  let pass = 0, fail = 0;
+  const missingScopes = [];
+  for (const c of checks) {
+    console.log(`  ${c.ok ? '✅' : '❌'} ${c.name}`);
+    c.ok ? pass++ : fail++;
+    if (!c.ok) missingScopes.push(c.scope);
+  }
+  console.log(`  ${pass}/${checks.length} passed\n`);
+
+  // Step 3: Apply missing permissions if needed
+  if (fail > 0) {
+    console.log('Step 3: Applying missing permissions...');
+    console.log(`  Missing scopes: ${missingScopes.join(', ')}\n`);
+    
+    console.log('  ⚠️  Feishu requires 2 steps to grant permissions:');
+    console.log('  ────────────────────────────────────────────');
+    console.log('  A) Declare scopes in app config (manual, one-time):');
+    console.log(`     1. Open: https://open.feishu.cn/app/${APP_ID}/`);
+    console.log('     2. Go to "权限管理" (Permissions)');
+    console.log('     3. Search and enable each scope:');
+    for (const s of missingScopes) {
+      console.log(`        - ${s}`);
+    }
+    console.log('     4. Click "创建版本并发布" (Create version & publish)');
+    console.log('');
+    console.log('  B) Request admin approval (can be automated):');
+    
+    const applyRes = await req('POST', '/open-apis/application/v6/scopes/apply');
+    if (applyRes.code === 0) {
+      console.log('     ✅ Apply request sent! Waiting for admin approval.');
+    } else if (applyRes.code === 212002) {
+      console.log('     ℹ️  No pending scopes to apply. Complete step A first.');
+    } else {
+      console.log(`     ⚠️  Apply returned: ${applyRes.code} ${applyRes.msg}`);
+    }
+    
+    console.log('\n  After approval, run this again to verify:');
+    console.log('  node feishu_sheet.js setup\n');
+  } else {
+    console.log('Step 3: ✅ All permissions OK!\n');
+    console.log('🎉 Setup complete! You can now use all feishu-sheet commands.');
+    console.log('   Example: node feishu_sheet.js create --title "My Sheet"');
+  }
+}
+
 // --- CLI ---
 function parseArgs(argv) {
   const args = { _cmd: argv[0] };
@@ -486,7 +578,7 @@ async function main() {
   const rawArgs = process.argv.slice(2);
   if (rawArgs.length === 0) {
     console.log('Usage: feishu_sheet.js <command> [options]');
-    console.log('Commands: create, write, read, dropdown, header, colwidth, permission, sheets, add-sheet, validation, check-perms, apply-perms');
+    console.log('Commands: setup, create, write, read, dropdown, header, colwidth, permission, sheets, add-sheet, validation, check-perms, apply-perms');
     process.exit(0);
   }
 
@@ -506,6 +598,7 @@ async function main() {
     case 'validation': await cmdValidation(args); break;
     case 'check-perms': await cmdCheckPerms(args); break;
     case 'apply-perms': await cmdApplyPerms(args); break;
+    case 'setup': await cmdSetup(args); break;
     default:
       console.error(`Unknown command: ${args._cmd}`);
       process.exit(1);
