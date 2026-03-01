@@ -99,5 +99,28 @@ Body: { requests: [{ updateSheet: { properties: { sheetId, frozenRowCount: 1 } }
 | 黄色背景 | #FFF9C4 | 进行中 |
 | 表头蓝 | #4472C4 (背景) + #FFFFFF (字体) | 表头 |
 
+## 所需权限
+
+电子表格操作需要以下飞书应用权限（scope）：
+- `sheets:spreadsheet` — 读写电子表格
+- `sheets:spreadsheet:create` — 创建电子表格
+- `sheets:spreadsheet:read` / `sheets:spreadsheet:readonly` — 读取
+- `sheets:spreadsheet:write_only` — 写入
+- `sheets:spreadsheet.meta:read` / `write_only` — 元数据
+- `drive:file` — 文件操作（权限管理需要）
+- `docs:permission.member:*` — 权限管理
+
+### 检查权限
+```bash
+node SKILL_DIR/scripts/feishu_sheet.js check-perms
+```
+会列出所有 sheets/drive/docs:permission 相关的已授权权限，缺失的会标 ❌。
+
+### 在飞书开放平台申请权限
+1. 打开 https://open.feishu.cn/app → 选择你的应用
+2. 权限管理 → 搜索 `sheets:spreadsheet` → 开通
+3. 同理搜索 `drive:file`、`docs:permission` 开通
+4. 发布新版本使权限生效
+
 ## API 参考
 详细 API 说明见 `SKILL_DIR/references/api-reference.md`
