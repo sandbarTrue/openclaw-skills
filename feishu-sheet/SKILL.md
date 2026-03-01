@@ -101,44 +101,60 @@ Body: { requests: [{ updateSheet: { properties: { sheetId, frozenRowCount: 1 } }
 
 ## 所需权限
 
-电子表格操作需要以下飞书应用权限（scope）：
-- `sheets:spreadsheet` — 读写电子表格
-- `sheets:spreadsheet:create` — 创建电子表格
-- `sheets:spreadsheet:read` / `sheets:spreadsheet:readonly` — 读取
-- `sheets:spreadsheet:write_only` — 写入
-- `sheets:spreadsheet.meta:read` / `write_only` — 元数据
-- `drive:file` — 文件操作（权限管理需要）
-- `docs:permission.member:*` — 权限管理
+在飞书开放平台（https://open.feishu.cn/app）→ 你的应用 → **权限管理** 中开通以下 scope：
 
-### 一键 setup（推荐）
+### 电子表格（必需）
+
+| Scope | 说明 | 用途 |
+|-------|------|------|
+| `sheets:spreadsheet` | 读写电子表格 | 样式、数据验证（下拉） |
+| `sheets:spreadsheet:create` | 创建电子表格 | 新建表格 |
+| `sheets:spreadsheet:read` | 读取电子表格 | 获取 sheet 列表 |
+| `sheets:spreadsheet:readonly` | 只读电子表格 | 读取数据 |
+| `sheets:spreadsheet:write_only` | 写入电子表格 | 写入数据 |
+| `sheets:spreadsheet.meta:read` | 读取元数据 | 获取 sheet 属性 |
+| `sheets:spreadsheet.meta:write_only` | 写入元数据 | 修改 sheet 属性（冻结行列等） |
+
+### 文件管理（权限操作需要）
+
+| Scope | 说明 | 用途 |
+|-------|------|------|
+| `drive:file` | 文件管理 | 删除测试文件等 |
+| `drive:file:upload` | 上传文件 | 上传附件 |
+| `drive:file:readonly` | 只读文件 | 读取文件信息 |
+| `drive:file:download` | 下载文件 | 导出表格 |
+
+### 权限管理（分享协作需要）
+
+| Scope | 说明 | 用途 |
+|-------|------|------|
+| `docs:permission.member` | 协作者管理 | 添加/管理协作者 |
+| `docs:permission.member:create` | 添加协作者 | 授权他人 |
+| `docs:permission.member:update` | 更新协作者 | 修改权限级别 |
+| `docs:permission.member:delete` | 删除协作者 | 移除权限 |
+| `docs:permission.member:retrieve` | 查看协作者 | 列出协作者 |
+| `docs:permission.setting` | 权限设置 | 公开分享设置 |
+| `docs:permission.setting:readonly` | 只读权限设置 | 查看分享状态 |
+| `docs:permission.setting:write_only` | 写入权限设置 | 设置链接分享 |
+
+### 快速开通
+
+在飞书开放平台权限管理页面，搜索以下 **3 个关键词**，把搜出来的全部开通即可：
+
+1. **`sheets:spreadsheet`** — 开通所有电子表格相关权限
+2. **`drive:file`** — 开通所有文件管理相关权限
+3. **`docs:permission`** — 开通所有权限管理相关权限
+
+开通后需要**创建版本并发布**才会生效。
+
+### 验证权限
 ```bash
+# 一键检测（自动创建测试表格验证所有功能）
 node SKILL_DIR/scripts/feishu_sheet.js setup
+
+# 如有未批准的权限，一键发送审批请求给管理员
+node SKILL_DIR/scripts/feishu_sheet.js apply-perms
 ```
-自动检查凭据 → 功能测试 → 缺权限时自动申请 + 输出指引。
-
-### 浏览器自动开通权限（缺权限时用）
-当 `setup` 检测到权限不足时，用浏览器自动到飞书开放平台开通：
-
-```bash
-# 获取操作指令
-node SKILL_DIR/scripts/setup-perms.js --app-id <app_id>
-```
-
-**Agent 浏览器自动化步骤：**
-1. 打开 `https://open.feishu.cn/app/{appId}/permission/scope/manage`
-2. 如果需要登录 → 提示用户扫码，等待跳转
-3. 搜索 `sheets:spreadsheet` → 对每个结果点"开通"按钮
-4. 搜索 `drive:file` → 同上
-5. 搜索 `docs:permission` → 同上
-6. 提示用户点"创建版本并发布"
-7. 运行 `node feishu_sheet.js apply-perms` 发送审批请求
-
-### 手动开通
-1. 打开 `https://open.feishu.cn/app/{appId}/permission/scope/manage`
-2. 搜索 `sheets:spreadsheet` → 全部开通
-3. 搜索 `drive:file` → 全部开通
-4. 搜索 `docs:permission` → 全部开通
-5. 创建版本并发布
 
 ## API 参考
 详细 API 说明见 `SKILL_DIR/references/api-reference.md`
