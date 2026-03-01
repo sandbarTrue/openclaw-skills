@@ -376,6 +376,95 @@ async function cmdValidation(args) {
   }
 }
 
+async function cmdCheckPerms(args) {
+  console.log('Testing feishu-sheet permissions...\n');
+  
+  const checks = [];
+  
+  // 1. Create spreadsheet
+  const createRes = await req('POST', '/open-apis/sheets/v3/spreadsheets', { title: '__perm_check__' });
+  const canCreate = createRes.code === 0;
+  checks.push({ name: 'Create spreadsheet (sheets:spreadsheet:create)', ok: canCreate });
+  
+  if (canCreate) {
+    const ss = createRes.data.spreadsheet.spreadsheet_token;
+    const meta = await req('GET', `/open-apis/sheets/v3/spreadsheets/${ss}/sheets/query`);
+    const sid = meta.data?.sheets?.[0]?.sheet_id;
+    
+    // 2. Read sheets
+    checks.push({ name: 'List sheets (sheets:spreadsheet:read)', ok: meta.code === 0 });
+    
+    // 3. Write data
+    const writeRes = await req('PUT', `/open-apis/sheets/v2/spreadsheets/${ss}/values`, {
+      valueRange: { range: `${sid}!A1:B2`, values: [['test','data'],['a','b']] }
+    });
+    checks.push({ name: 'Write data (sheets:spreadsheet:write_only)', ok: writeRes.code === 0 });
+    
+    // 4. Read data
+    const readRes = await req('GET', `/open-apis/sheets/v2/spreadsheets/${ss}/values/${sid}!A1:B2`);
+    checks.push({ name: 'Read data (sheets:spreadsheet:readonly)', ok: readRes.code === 0 });
+    
+    // 5. Set style
+    const styleRes = await req('PUT', `/open-apis/sheets/v2/spreadsheets/${ss}/style`, {
+      appendStyle: { range: `${sid}!A1:B1`, style: { bold: true } }
+    });
+    checks.push({ name: 'Set style (sheets:spreadsheet)', ok: styleRes.code === 0 });
+    
+    // 6. Data validation (dropdown)
+    const dvRes = await req('POST', `/open-apis/sheets/v2/spreadsheets/${ss}/dataValidation`, {
+      range: `${sid}!A2:A2`, dataValidationType: 'list',
+      dataValidation: { conditionValues: ['X','Y'], options: { highlightValidData: true, colors: ['#FF0000','#00FF00'] } }
+    });
+    checks.push({ name: 'Color dropdown (dataValidation)', ok: dvRes.code === 0 });
+    
+    // 7. Permission management
+    const permRes = await req('PATCH', `/open-apis/drive/v1/permissions/${ss}/public?type=sheet`, {
+      external_access_entity: 'open', link_share_entity: 'anyone_readable'
+    });
+    checks.push({ name: 'Set permissions (drive:file, docs:permission)', ok: permRes.code === 0 });
+    
+    // Cleanup
+    await req('DELETE', `/open-apis/drive/v1/files/${ss}?type=sheet`);
+  }
+  
+  // Print results
+  let pass = 0, fail = 0;
+  for (const c of checks) {
+    console.log(`${c.ok ? '✅' : '❌'} ${c.name}`);
+    c.ok ? pass++ : fail++;
+  }
+  
+  console.log(`\n${pass}/${checks.length} passed`);
+  if (fail > 0) {
+    console.log('\n⚠️ Some permissions missing. Fix:');
+    console.log('  1. Open https://open.feishu.cn/app → Your App → Permissions');
+    console.log('  2. Search and enable: sheets:spreadsheet, drive:file, docs:permission');
+    console.log('  3. Or run: node feishu_sheet.js apply-perms');
+  } else {
+    console.log('✅ All permissions OK! Ready to use.');
+  }
+}
+
+async function cmdApplyPerms(args) {
+  // Apply for all declared but not-yet-approved scopes
+  const res = await req('POST', '/open-apis/application/v6/scopes/apply');
+  
+  if (res.code === 0) {
+    console.log('✅ Permission apply request sent to admin!');
+    console.log('Admin needs to approve in Feishu Admin Console.');
+  } else if (res.code === 212002) {
+    console.log('✅ All permissions already granted, nothing to apply.');
+  } else if (res.code === 212001) {
+    console.log('⚠️ Remaining unapproved permissions are high-sensitivity scopes.');
+    console.log('These must be approved manually in Feishu Admin Console:');
+    console.log('  https://open.feishu.cn/app → Your App → Permissions');
+  } else if (res.code === 212004) {
+    console.log('⚠️ Duplicate apply request. Already pending admin approval.');
+  } else {
+    console.error('❌ Apply failed:', res.code, res.msg);
+  }
+}
+
 // --- CLI ---
 function parseArgs(argv) {
   const args = { _cmd: argv[0] };
@@ -397,7 +486,7 @@ async function main() {
   const rawArgs = process.argv.slice(2);
   if (rawArgs.length === 0) {
     console.log('Usage: feishu_sheet.js <command> [options]');
-    console.log('Commands: create, write, read, dropdown, header, colwidth, permission, sheets, add-sheet, validation');
+    console.log('Commands: create, write, read, dropdown, header, colwidth, permission, sheets, add-sheet, validation, check-perms, apply-perms');
     process.exit(0);
   }
 
@@ -415,6 +504,8 @@ async function main() {
     case 'sheets': await cmdSheets(args); break;
     case 'add-sheet': await cmdAddSheet(args); break;
     case 'validation': await cmdValidation(args); break;
+    case 'check-perms': await cmdCheckPerms(args); break;
+    case 'apply-perms': await cmdApplyPerms(args); break;
     default:
       console.error(`Unknown command: ${args._cmd}`);
       process.exit(1);
