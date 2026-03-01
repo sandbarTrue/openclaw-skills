@@ -110,17 +110,35 @@ Body: { requests: [{ updateSheet: { properties: { sheetId, frozenRowCount: 1 } }
 - `drive:file` — 文件操作（权限管理需要）
 - `docs:permission.member:*` — 权限管理
 
-### 检查权限
+### 一键 setup（推荐）
 ```bash
-node SKILL_DIR/scripts/feishu_sheet.js check-perms
+node SKILL_DIR/scripts/feishu_sheet.js setup
 ```
-会列出所有 sheets/drive/docs:permission 相关的已授权权限，缺失的会标 ❌。
+自动检查凭据 → 功能测试 → 缺权限时自动申请 + 输出指引。
 
-### 在飞书开放平台申请权限
-1. 打开 https://open.feishu.cn/app → 选择你的应用
-2. 权限管理 → 搜索 `sheets:spreadsheet` → 开通
-3. 同理搜索 `drive:file`、`docs:permission` 开通
-4. 发布新版本使权限生效
+### 浏览器自动开通权限（缺权限时用）
+当 `setup` 检测到权限不足时，用浏览器自动到飞书开放平台开通：
+
+```bash
+# 获取操作指令
+node SKILL_DIR/scripts/setup-perms.js --app-id <app_id>
+```
+
+**Agent 浏览器自动化步骤：**
+1. 打开 `https://open.feishu.cn/app/{appId}/permission/scope/manage`
+2. 如果需要登录 → 提示用户扫码，等待跳转
+3. 搜索 `sheets:spreadsheet` → 对每个结果点"开通"按钮
+4. 搜索 `drive:file` → 同上
+5. 搜索 `docs:permission` → 同上
+6. 提示用户点"创建版本并发布"
+7. 运行 `node feishu_sheet.js apply-perms` 发送审批请求
+
+### 手动开通
+1. 打开 `https://open.feishu.cn/app/{appId}/permission/scope/manage`
+2. 搜索 `sheets:spreadsheet` → 全部开通
+3. 搜索 `drive:file` → 全部开通
+4. 搜索 `docs:permission` → 全部开通
+5. 创建版本并发布
 
 ## API 参考
 详细 API 说明见 `SKILL_DIR/references/api-reference.md`
