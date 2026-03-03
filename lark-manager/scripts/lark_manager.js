@@ -33,7 +33,7 @@ const { appId: APP_ID, appSecret: APP_SECRET } = loadFeishuCredentials();
 
 // Default document owner - the user (all documents auto-transfer to this user)
 // Note: open_id is per-app. This is the user's open_id under app YOUR_APP_ID
-const DEFAULT_OWNER_ID = 'YOUR_OPEN_ID';
+const DEFAULT_OWNER_ID = '';
 
 // Block type mappings
 const BLOCK_TYPES = {
@@ -1789,6 +1789,7 @@ async function cmdEdit(args) {
     const blockId = args.block || args.b;
     const newText = args.text || args.t;
     const file = args.file || args.f || null;
+    const replace = args.replace || false;
 
     if (!docId) throw new Error('Document ID required (--doc or -d)');
     if (!blockId && !file) throw new Error('Block ID (--block) or file (--file) required');
@@ -1798,8 +1799,26 @@ async function cmdEdit(args) {
     const token = await getTenantAccessToken();
 
     if (file) {
-        // Append content from file to document
-        console.log(`📄 Appending content from: ${file}`);
+        // Replace or append content from file to document
+        if (replace) {
+            console.log(`🔄 Replacing document content from: ${file}`);
+            // Get all existing blocks
+            const existingBlocks = await getAllBlocks(token, docId);
+            // Delete all blocks except the first one (page block)
+            console.log(`🗑️  Deleting ${existingBlocks.length - 1} existing blocks...`);
+            for (let i = 1; i < existingBlocks.length; i++) {
+                try {
+                    await deleteBlock(token, docId, existingBlocks[i].block_id);
+                    await new Promise(r => setTimeout(r, 100)); // Rate limit
+                } catch (err) {
+                    console.error(`⚠️  Failed to delete block ${existingBlocks[i].block_id}: ${err.message}`);
+                }
+            }
+            console.log(`✅ Existing content cleared`);
+        } else {
+            console.log(`📄 Appending content from: ${file}`);
+        }
+        
         const content = fs.readFileSync(file, 'utf8');
         const allBlocks = parseMarkdownToBlocks(content);
 
@@ -2127,7 +2146,8 @@ Edit Options:
   --doc, -d      Document ID (required)
   --block, -b    Block ID to update
   --text, -t     New text for block
-  --file, -f     Replace entire document from file
+  --file, -f     Upload content from file (append by default)
+  --replace      Replace entire document content (use with --file)
 
 List Options:
   --doc, -d      Document ID (required)
