@@ -917,23 +917,41 @@ async function addDescendants(token, documentId, childrenId, descendants, parent
 }
 
 /**
- * Delete blocks
+ * Batch delete child blocks under a parent block.
+ * Feishu docx replace needs deleting children from the document root.
  */
-async function deleteBlock(token, documentId, blockId) {
-    const url = `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${blockId}`;
+async function batchDeleteChildren(token, documentId, parentBlockId, startIndex, endIndex) {
+    const url = `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${parentBlockId}/children/batch_delete`;
     try {
         const response = await axios.delete(url, {
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json; charset=utf-8'
+            },
+            data: {
+                start_index: startIndex,
+                end_index: endIndex
             }
         });
         if (response.data.code !== 0) {
-            throw new Error(`Delete block failed: ${JSON.stringify(response.data)}`);
+            throw new Error(`Batch delete failed: ${JSON.stringify(response.data)}`);
         }
         return { success: true };
     } catch (error) {
-        throw new Error(`Error deleting block: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+        throw new Error(`Error batch deleting blocks: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+    }
+}
+
+/**
+ * Clear all direct child blocks from a document root.
+ */
+async function clearDocumentContent(token, documentId) {
+    while (true) {
+        const page = await getBlocks(token, documentId, documentId, '', 500);
+        const children = page.items || [];
+        if (children.length === 0) return;
+        await batchDeleteChildren(token, documentId, documentId, 0, children.length);
+        await new Promise(r => setTimeout(r, 400));
     }
 }
 
@@ -1799,26 +1817,15 @@ async function cmdEdit(args) {
     const token = await getTenantAccessToken();
 
     if (file) {
-        // Replace or append content from file to document
         if (replace) {
             console.log(`🔄 Replacing document content from: ${file}`);
-            // Get all existing blocks
-            const existingBlocks = await getAllBlocks(token, docId);
-            // Delete all blocks except the first one (page block)
-            console.log(`🗑️  Deleting ${existingBlocks.length - 1} existing blocks...`);
-            for (let i = 1; i < existingBlocks.length; i++) {
-                try {
-                    await deleteBlock(token, docId, existingBlocks[i].block_id);
-                    await new Promise(r => setTimeout(r, 100)); // Rate limit
-                } catch (err) {
-                    console.error(`⚠️  Failed to delete block ${existingBlocks[i].block_id}: ${err.message}`);
-                }
-            }
+            const existingBlocks = await getBlocks(token, docId, docId, '', 500);
+            console.log(`🗑️  Deleting ${((existingBlocks.items || []).length)} root blocks...`);
+            await clearDocumentContent(token, docId);
             console.log(`✅ Existing content cleared`);
         } else {
             console.log(`📄 Appending content from: ${file}`);
         }
-        
         const content = fs.readFileSync(file, 'utf8');
         const allBlocks = parseMarkdownToBlocks(content);
 
@@ -1860,7 +1867,7 @@ async function cmdEdit(args) {
             totalBlocks += normalBlocks.length;
         }
 
-        console.log(`✅ Content appended (${totalBlocks} blocks, ${tableCount} tables)`);
+        console.log(`✅ Content ${replace ? 'replaced' : 'appended'} (${totalBlocks} blocks, ${tableCount} tables)`);
     } else if (blockId && newText) {
         // Update single block
         console.log(`📝 Updating block: ${blockId}`);
@@ -2072,12 +2079,16 @@ async function main() {
 
     const parsedArgs = {};
     for (let i = 1; i < args.length; i++) {
-        if (args[i].startsWith('--')) {
-            parsedArgs[args[i].substring(2)] = args[i + 1];
-            i++;
-        } else if (args[i].startsWith('-')) {
-            parsedArgs[args[i].substring(1)] = args[i + 1];
-            i++;
+        const current = args[i];
+        const next = args[i + 1];
+        const hasValue = next !== undefined && !next.startsWith('-');
+
+        if (current.startsWith('--')) {
+            parsedArgs[current.substring(2)] = hasValue ? next : true;
+            if (hasValue) i++;
+        } else if (current.startsWith('-')) {
+            parsedArgs[current.substring(1)] = hasValue ? next : true;
+            if (hasValue) i++;
         }
     }
 
@@ -2212,7 +2223,8 @@ module.exports = {
     getAllBlocks,
     updateBlock,
     addBlocks,
-    deleteBlock,
+    batchDeleteChildren,
+    clearDocumentContent,
     parseMarkdownToBlocks,
     blocksToMarkdown,
     addPermissionMember,
