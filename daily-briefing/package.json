@@ -1,0 +1,13 @@
+{
+  "name": "daily-briefing-skill",
+  "version": "1.0.0",
+  "description": "瓦力每日商业机会报告 - 自动抓取10个新闻源 + Polymarket 预测市场数据",
+  "main": "scripts/briefing.js",
+  "scripts": {
+    "run": "node scripts/briefing.js",
+    "test": "node scripts/briefing.js --format markdown --no-send"
+  },
+  "author": "瓦力 (Wall-E)",
+  "license": "MIT",
+  "dependencies": {}
+}
